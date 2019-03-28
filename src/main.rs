@@ -42,7 +42,6 @@ use cgmath::{Deg, Matrix4, Point3, Rad};
 
 mod archetype;
 mod camera;
-mod grid;
 mod node;
 mod shader;
 mod vertex;
@@ -223,6 +222,30 @@ fn main() {
     let mut recreate_swapchain = false;
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
+
+    // Begin compute
+
+    let sim_x_size = 50;
+    let sim_y_size = 50;
+    let sim_z_size = 50;
+
+    let grid_buffer = CpuAccessibleBuffer::from_iter(
+        device.clone(),
+        BufferUsage::all(),
+        vec![
+            shader::gridupdategrid::ty::GridCell {
+                typeCode: 0,
+                temperature: 0.0,
+                moisture: 0.0,
+                sunlight: 0.0,
+                gravity: 0.0,
+                plantDensity: 0.0,
+            };
+            sim_x_size * sim_y_size * sim_z_size
+        ]
+        .iter()
+        .cloned(),
+    );
 
     loop {
         previous_frame_end.cleanup_finished();
