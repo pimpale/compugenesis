@@ -18,6 +18,7 @@ use vulkano::image::SwapchainImage;
 use vulkano::instance::debug::{DebugCallback, MessageTypes};
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
 use vulkano::swapchain::{
@@ -176,24 +177,24 @@ fn main() {
 
     let render_pass = Arc::new(
         single_pass_renderpass!(
-                device.clone(),
-                attachments: {
-                    color: {
-                        load: Clear,
-                        store: Store,
-                        format: swapchain.format(),
-                        samples: 1,
-                    }
-                },
-                pass: {
-                    color: [color],
-                    depth_stencil: {}
+            device.clone(),
+            attachments: {
+                color: {
+                    load: Clear,
+                    store: Store,
+                    format: swapchain.format(),
+                    samples: 1,
                 }
+            },
+            pass: {
+                color: [color],
+                depth_stencil: {}
+            }
         )
         .unwrap(),
     );
 
-    let pipeline = Arc::new(
+    let graphics_pipeline = Arc::new(
         GraphicsPipeline::start()
             .vertex_input_single_buffer()
             .vertex_shader(vs.main_entry_point(), ())
@@ -229,23 +230,36 @@ fn main() {
     let sim_y_size = 50;
     let sim_z_size = 50;
 
-    let grid_buffer = CpuAccessibleBuffer::from_iter(
-        device.clone(),
-        BufferUsage::all(),
-        vec![
-            shader::gridupdategrid::ty::GridCell {
-                typeCode: 0,
-                temperature: 0.0,
-                moisture: 0.0,
-                sunlight: 0.0,
-                gravity: 0.0,
-                plantDensity: 0.0,
-            };
-            sim_x_size * sim_y_size * sim_z_size
-        ]
-        .iter()
-        .cloned(),
-    );
+    let mut data: Vec<shader::gridupdategrid::ty::GridCell> = Vec::new();
+
+    (0..sim_x_size).map(|x| (0..sim_y_size).map(move |y| (0..sim_z_size).map(move |z| (x, y, z))));
+
+    for x in 0..sim_x_size {
+        for y in 0..sim_y_size {
+            for z in 0..sim_z_size {
+                data.push(shader::gridupdategrid::ty::GridCell {
+                    //Initialize the array to be filled with dirt halfway
+                    typeCode: if z > sim_z_size / 2 {
+                        shader::GRIDCELL_TYPE_AIR
+                    } else {
+                        shader::GRIDCELL_TYPE_SOIL
+                    },
+                    temperature: 0.0,
+                    moisture: 0.0,
+                    sunlight: 0.0,
+                    gravity: 0.0,
+                    plantDensity: 0.0,
+                });
+            }
+        }
+    }
+
+    let grid_buffer =
+        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.iter());
+
+    let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
+    let compute_pipeline =
+        ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap();
 
     loop {
         previous_frame_end.cleanup_finished();
@@ -301,7 +315,7 @@ fn main() {
                 .begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
                 .unwrap()
                 .draw(
-                    pipeline.clone(),
+                    graphics_pipeline.clone(),
                     &dynamic_state,
                     vertex_buffer.clone(),
                     (),

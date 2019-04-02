@@ -3,10 +3,11 @@ ty: "compute",
     src: "
 #version 450
 
-#define GRIDCELL_INVALID_MATERIAL (0)
-#define GRIDCELL_WATER (1)
-#define GRIDCELL_STONE (2)
-#define GRIDCELL_SOIL (3)
+#define GRIDCELL_TYPE_INVALID_MATERIAL (0)
+#define GRIDCELL_TYPE_AIR (1)
+#define GRIDCELL_TYPE_WATER (2)
+#define GRIDCELL_TYPE_STONE (3)
+#define GRIDCELL_TYPE_SOIL (4)
 
 
 struct GridCell {
