@@ -1,9 +1,11 @@
 #[macro_use]
 extern crate vulkano;
 extern crate cgmath;
+extern crate csv;
 extern crate gio;
 extern crate gtk;
 extern crate rand;
+extern crate serde;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
@@ -12,6 +14,7 @@ extern crate winit;
 #[allow(unused_imports)]
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, DeviceExtensions};
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::SwapchainImage;
@@ -24,19 +27,21 @@ use vulkano::swapchain;
 use vulkano::swapchain::{
     AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
+use vulkano::sync;
+use vulkano::sync::GpuFuture;
+
+use std::sync::Arc;
 
 use gio::prelude::*;
 use gio::ApplicationFlags;
 use gtk::prelude::*;
 
-use vulkano::sync;
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::sync::FlushError;
 
 use vulkano_win::VkSurfaceBuild;
 
 use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEvent};
 
-use std::sync::Arc;
 use std::sync::RwLock;
 
 use cgmath::{Deg, Matrix4, Point3, Rad};
@@ -99,7 +104,11 @@ fn main() {
 
     let queue_family = physical
         .queue_families()
-        .find(|&q| q.supports_graphics() && surface.is_supported(q).unwrap_or(false))
+        .find(|&q| {
+            q.supports_graphics()
+                && q.supports_compute()
+                && surface.is_supported(q).unwrap_or(false)
+        })
         .unwrap();
 
     let device_ext = DeviceExtensions {
@@ -114,7 +123,7 @@ fn main() {
     )
     .unwrap();
 
-    let settings_packet = std::sync::Arc::new(std::sync::RwLock::new(SettingsPacket {
+    let settings_packet = Arc::new(RwLock::new(SettingsPacket {
         sunlight: 1.0,
         gravity: 9.8,
         moisture: 1.0,
@@ -220,48 +229,91 @@ fn main() {
         &mut camera,
     );
 
-    let mut recreate_swapchain = false;
+    //Compute stuff
 
-    let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
+    let sim_x_size: u32 = 50;
+    let sim_y_size: u32 = 50;
+    let sim_z_size: u32 = 50;
 
-    // Begin compute
-
-    let sim_x_size = 50;
-    let sim_y_size = 50;
-    let sim_z_size = 50;
-
-    let mut data: Vec<shader::gridupdategrid::ty::GridCell> = Vec::new();
-
-    (0..sim_x_size).map(|x| (0..sim_y_size).map(move |y| (0..sim_z_size).map(move |z| (x, y, z))));
+    let mut data = vec![
+        shader::gridupdategrid::ty::GridCell {
+            typeCode: shader::GRIDCELL_TYPE_INVALID_MATERIAL,
+            temperature: 0.0,
+            moisture: 0.0,
+            sunlight: 0.0,
+            gravity: 0.0,
+            plantDensity: 0.0,
+        };
+        (sim_x_size * sim_y_size * sim_z_size) as usize
+    ];
 
     for x in 0..sim_x_size {
         for y in 0..sim_y_size {
             for z in 0..sim_z_size {
-                data.push(shader::gridupdategrid::ty::GridCell {
-                    //Initialize the array to be filled with dirt halfway
-                    typeCode: if z > sim_z_size / 2 {
-                        shader::GRIDCELL_TYPE_AIR
-                    } else {
-                        shader::GRIDCELL_TYPE_SOIL
-                    },
-                    temperature: 0.0,
-                    moisture: 0.0,
-                    sunlight: 0.0,
-                    gravity: 0.0,
-                    plantDensity: 0.0,
-                });
+                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] =
+                    shader::gridupdategrid::ty::GridCell {
+                        //Initialize the array to be filled with dirt halfway
+                        typeCode: if z > sim_z_size / 2 {
+                            shader::GRIDCELL_TYPE_AIR
+                        } else {
+                            shader::GRIDCELL_TYPE_SOIL
+                        },
+                        temperature: 0.0,
+                        moisture: 0.0,
+                        sunlight: 0.0,
+                        gravity: 0.0,
+                        plantDensity: 0.0,
+                    };
             }
         }
     }
 
     let grid_buffer =
-        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.iter());
-
+        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.drain(..)).unwrap();
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
-    let compute_pipeline =
-        ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap();
+
+    let gridupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let gridupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
+            .add_buffer(grid_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let mut recreate_swapchain = false;
+
+    let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
     loop {
+        //Compute
+
+        let gridupdategrid_command_buffer =
+            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+                .unwrap()
+                .dispatch(
+                    [sim_x_size, sim_y_size, sim_z_size],
+                    gridupdategrid_pipeline.clone(),
+                    gridupdategrid_set.clone(),
+                    (),
+                )
+                .unwrap()
+                .build()
+                .unwrap();
+
+        let compute_future = sync::now(device.clone())
+            .then_execute(queue.clone(), gridupdategrid_command_buffer)
+            .unwrap()
+            .then_signal_fence_and_flush()
+            .unwrap();
+
+        compute_future.wait(None).unwrap();
+
+        //Graphics
+
         previous_frame_end.cleanup_finished();
 
         node_buffer.update_all();
