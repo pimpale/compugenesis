@@ -46,6 +46,8 @@ use std::sync::RwLock;
 
 use cgmath::{Deg, Matrix4, Point3, Rad};
 
+mod util;
+
 mod archetype;
 mod camera;
 mod node;
@@ -231,9 +233,9 @@ fn main() {
 
     //Compute stuff
 
-    let sim_x_size: u32 = 50;
-    let sim_y_size: u32 = 50;
-    let sim_z_size: u32 = 50;
+    let sim_x_size: u32 = 5;
+    let sim_y_size: u32 = 5;
+    let sim_z_size: u32 = 5;
 
     let mut data = vec![
         shader::gridupdategrid::ty::GridCell {
@@ -268,8 +270,20 @@ fn main() {
         }
     }
 
-    let grid_buffer =
+    let grid_data_buffer =
         CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.drain(..)).unwrap();
+
+    let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
+        device.clone(),
+        BufferUsage::uniform_buffer(),
+        shader::gridupdategrid::ty::Constants {
+            xsize: sim_x_size,
+            ysize: sim_y_size,
+            zsize: sim_z_size,
+        },
+    )
+    .unwrap();
+
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
 
     let gridupdategrid_pipeline = Arc::new(
@@ -278,40 +292,58 @@ fn main() {
 
     let gridupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
-            .add_buffer(grid_buffer.clone())
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
             .unwrap()
             .build()
             .unwrap(),
     );
+
+    let gridupdategrid_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [sim_x_size * sim_y_size * sim_z_size, 1, 1],
+                gridupdategrid_pipeline.clone(),
+                gridupdategrid_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
+
+    let nodeupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let nodeupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let compute_future = sync::now(device.clone())
+        .then_execute(queue.clone(), gridupdategrid_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap();
+
+    compute_future.wait(None).unwrap();
+
+    return;
 
     let mut recreate_swapchain = false;
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
     loop {
-        //Compute
-
-        let gridupdategrid_command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .dispatch(
-                    [sim_x_size, sim_y_size, sim_z_size],
-                    gridupdategrid_pipeline.clone(),
-                    gridupdategrid_set.clone(),
-                    (),
-                )
-                .unwrap()
-                .build()
-                .unwrap();
-
-        let compute_future = sync::now(device.clone())
-            .then_execute(queue.clone(), gridupdategrid_command_buffer)
-            .unwrap()
-            .then_signal_fence_and_flush()
-            .unwrap();
-
-        compute_future.wait(None).unwrap();
-
         //Graphics
 
         previous_frame_end.cleanup_finished();

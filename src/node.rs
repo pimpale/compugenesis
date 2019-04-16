@@ -222,7 +222,6 @@ impl NodeBuffer {
                             Matrix4::from_angle_z(Rad(rand::random::<f32>() - 0.5)).into();
                         nnode
                     };
-                    println!("test");
                     self.set_right_child(i, ni);
                 }
             }
