@@ -1,6 +1,6 @@
 vulkano_shaders::shader! {
-    ty: "compute",
-    src: "
+    ty:
+        "compute", src : "
 #version 450
 
 struct Node {
@@ -18,23 +18,47 @@ struct Node {
 };
 
 struct GridCell {
-  uint typeCode;
-  float temperature;
-  float moisture;
-  float sunlight;
-  float gravity;
-  float plantDensity;
+    uint typeCode;
+    float temperature;
+    float moisture;
+    float sunlight;
+    float gravity;
+    float plantDensity;
 };
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(set = 0, binding = 0) buffer NodeBuffer {
-    Node nodes[];
-} buf;
+layout(binding = 0) uniform GridMetadata {
+    uint xsize;
+    uint ysize;
+    uint zsize;
+}
+gridMetadata;
+
+layout(binding = 1) uniform NodeMetadata {
+    uint nodeCount;
+    uint nodeCapacity;
+
+nodeMetadata;
+
+layout(binding = 2) buffer NodeBuffer { 
+    Node nodes[]; 
+}
+nodeData;
+
+layout(binding = 3) buffer GridBuffer { 
+    GridCell gridCell[]; 
+}
+gridData;
+
+uint getGridCellId(uint x, uint y, uint z) {
+    return (gridMetadata.xsize * gridMetadata.ysize * z +
+            gridMetadata.xsize * y + x);
+}
 
 void main() {
-    uint idx = gl_GlobalInvocationID.x;
-    buf.nodes[idx].age++;
+    uint id = gl_GlobalInvocationID.x;
+    nodeData.nodes[id].age++;
 }
 "
 }

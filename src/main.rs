@@ -276,7 +276,7 @@ fn main() {
     let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
         device.clone(),
         BufferUsage::uniform_buffer(),
-        shader::gridupdategrid::ty::Constants {
+        shader::gridupdategrid::ty::GridMetadata {
             xsize: sim_x_size,
             ysize: sim_y_size,
             zsize: sim_z_size,

@@ -20,24 +20,19 @@ struct GridCell {
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) uniform Constants {
+layout(binding = 0) uniform GridMetadata {
   uint xsize;
   uint ysize;
   uint zsize;
-} consts;
+} gridMetadata;
 
-layout(binding = 1) buffer GridBuffer {
+layout(binding = 1) buffer GridData{
   GridCell gridCell[];
-} buf;
+} gridData;
 
 void main() {
   uint id = gl_GlobalInvocationID.x;
-
-  uint xsize = consts.xsize;
-  uint ysize = consts.ysize;
-  uint zsize = consts.zsize;
-
-  buf.gridCell[id].temperature = 5;
+  gridData.gridCell[id].temperature = 5;
 }
 "
 }
