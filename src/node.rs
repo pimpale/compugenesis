@@ -210,7 +210,7 @@ impl NodeBuffer {
                 let r = rand::random::<f32>();
                 self.node_list[i as usize].length = node.length * (0.1 - node.length) + node.length;
                 self.node_list[i as usize].age += 1;
-                if node.length > 0.007 && node.age < 9000 && r > 0.9995 {
+                if node.length > 0.007 && node.age < 9000 && r > 0.995 {
                     self.divide(0.5, i);
                     let ni = self.alloc().unwrap();
                     self.node_list[ni as usize] = {

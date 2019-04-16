@@ -1,9 +1,11 @@
 #[macro_use]
 extern crate vulkano;
 extern crate cgmath;
+extern crate csv;
 extern crate gio;
 extern crate gtk;
 extern crate rand;
+extern crate serde;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
@@ -12,37 +14,42 @@ extern crate winit;
 #[allow(unused_imports)]
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, DeviceExtensions};
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::SwapchainImage;
 use vulkano::instance::debug::{DebugCallback, MessageTypes};
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
 use vulkano::swapchain::{
     AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
+use vulkano::sync;
+use vulkano::sync::GpuFuture;
+
+use std::sync::Arc;
 
 use gio::prelude::*;
 use gio::ApplicationFlags;
 use gtk::prelude::*;
 
-use vulkano::sync;
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::sync::FlushError;
 
 use vulkano_win::VkSurfaceBuild;
 
 use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEvent};
 
-use std::sync::Arc;
 use std::sync::RwLock;
 
 use cgmath::{Deg, Matrix4, Point3, Rad};
 
+mod util;
+
 mod archetype;
 mod camera;
-mod grid;
 mod node;
 mod shader;
 mod vertex;
@@ -99,7 +106,11 @@ fn main() {
 
     let queue_family = physical
         .queue_families()
-        .find(|&q| q.supports_graphics() && surface.is_supported(q).unwrap_or(false))
+        .find(|&q| {
+            q.supports_graphics()
+                && q.supports_compute()
+                && surface.is_supported(q).unwrap_or(false)
+        })
         .unwrap();
 
     let device_ext = DeviceExtensions {
@@ -114,7 +125,7 @@ fn main() {
     )
     .unwrap();
 
-    let settings_packet = std::sync::Arc::new(std::sync::RwLock::new(SettingsPacket {
+    let settings_packet = Arc::new(RwLock::new(SettingsPacket {
         sunlight: 1.0,
         gravity: 9.8,
         moisture: 1.0,
@@ -177,24 +188,24 @@ fn main() {
 
     let render_pass = Arc::new(
         single_pass_renderpass!(
-                device.clone(),
-                attachments: {
-                    color: {
-                        load: Clear,
-                        store: Store,
-                        format: swapchain.format(),
-                        samples: 1,
-                    }
-                },
-                pass: {
-                    color: [color],
-                    depth_stencil: {}
+            device.clone(),
+            attachments: {
+                color: {
+                    load: Clear,
+                    store: Store,
+                    format: swapchain.format(),
+                    samples: 1,
                 }
+            },
+            pass: {
+                color: [color],
+                depth_stencil: {}
+            }
         )
         .unwrap(),
     );
 
-    let pipeline = Arc::new(
+    let graphics_pipeline = Arc::new(
         GraphicsPipeline::start()
             .vertex_input_single_buffer()
             .vertex_shader(vs.main_entry_point(), ())
@@ -220,11 +231,121 @@ fn main() {
         &mut camera,
     );
 
+    //Compute stuff
+
+    let sim_x_size: u32 = 5;
+    let sim_y_size: u32 = 5;
+    let sim_z_size: u32 = 5;
+
+    let mut data = vec![
+        shader::gridupdategrid::ty::GridCell {
+            typeCode: shader::GRIDCELL_TYPE_INVALID_MATERIAL,
+            temperature: 0.0,
+            moisture: 0.0,
+            sunlight: 0.0,
+            gravity: 0.0,
+            plantDensity: 0.0,
+        };
+        (sim_x_size * sim_y_size * sim_z_size) as usize
+    ];
+
+    for x in 0..sim_x_size {
+        for y in 0..sim_y_size {
+            for z in 0..sim_z_size {
+                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] =
+                    shader::gridupdategrid::ty::GridCell {
+                        //Initialize the array to be filled with dirt halfway
+                        typeCode: if z > sim_z_size / 2 {
+                            shader::GRIDCELL_TYPE_AIR
+                        } else {
+                            shader::GRIDCELL_TYPE_SOIL
+                        },
+                        temperature: 0.0,
+                        moisture: 0.0,
+                        sunlight: 0.0,
+                        gravity: 0.0,
+                        plantDensity: 0.0,
+                    };
+            }
+        }
+    }
+
+    let grid_data_buffer =
+        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.drain(..)).unwrap();
+
+    let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
+        device.clone(),
+        BufferUsage::uniform_buffer(),
+        shader::gridupdategrid::ty::Constants {
+            xsize: sim_x_size,
+            ysize: sim_y_size,
+            zsize: sim_z_size,
+        },
+    )
+    .unwrap();
+
+    let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
+
+    let gridupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let gridupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let gridupdategrid_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [sim_x_size * sim_y_size * sim_z_size, 1, 1],
+                gridupdategrid_pipeline.clone(),
+                gridupdategrid_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
+
+    let nodeupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let nodeupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let compute_future = sync::now(device.clone())
+        .then_execute(queue.clone(), gridupdategrid_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap();
+
+    compute_future.wait(None).unwrap();
+
+    return;
+
     let mut recreate_swapchain = false;
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
     loop {
+        //Graphics
+
         previous_frame_end.cleanup_finished();
 
         node_buffer.update_all();
@@ -278,7 +399,7 @@ fn main() {
                 .begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
                 .unwrap()
                 .draw(
-                    pipeline.clone(),
+                    graphics_pipeline.clone(),
                     &dynamic_state,
                     vertex_buffer.clone(),
                     (),
