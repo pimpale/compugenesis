@@ -233,9 +233,11 @@ fn main() {
 
     //Compute stuff
 
-    let sim_x_size: u32 = 5;
-    let sim_y_size: u32 = 5;
-    let sim_z_size: u32 = 5;
+    let sim_x_size: u32 = 10;
+    let sim_y_size: u32 = 10;
+    let sim_z_size: u32 = 10;
+
+    let nodeCapacity = 50;
 
     let mut data = vec![
         shader::gridupdategrid::ty::GridCell {
@@ -284,6 +286,9 @@ fn main() {
     )
     .unwrap();
 
+    let node_metadata_buffer = node_buffer.gen_metadata(device.clone());
+    let node_data_buffer = node_buffer.gen_data(device.clone());
+
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
 
     let gridupdategrid_pipeline = Arc::new(
@@ -321,6 +326,10 @@ fn main() {
 
     let nodeupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
             .add_buffer(grid_metadata_buffer.clone())
             .unwrap()
             .add_buffer(grid_data_buffer.clone())

@@ -1,6 +1,6 @@
 vulkano_shaders::shader! {
-    ty:
-        "compute", src : "
+    ty: "compute",
+    src: "
 #version 450
 
 struct Node {
@@ -36,10 +36,9 @@ layout(binding = 0) uniform GridMetadata {
 gridMetadata;
 
 layout(binding = 1) uniform NodeMetadata {
-    uint nodeCount;
-    uint nodeCapacity;
-
-nodeMetadata;
+    uint nodeDataCount;
+    uint nodeDataCapacity;
+} nodeMetadata;
 
 layout(binding = 2) buffer NodeBuffer { 
     Node nodes[]; 

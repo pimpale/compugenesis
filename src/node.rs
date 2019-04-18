@@ -3,10 +3,14 @@
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
-use std::ops::Add;
 
 use super::archetype::INVALID_ARCHETYPE_INDEX;
+use super::shader::nodeupdategrid::ty::Node;
+use super::shader::nodeupdategrid::ty::NodeMetadata;
 use super::vertex::Vertex;
+use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+use super::vulkano::device::Device;
+use std::sync::Arc;
 
 pub const INVALID_INDEX: u32 = std::u32::MAX;
 
@@ -15,23 +19,7 @@ pub const STATUS_DEAD: u32 = 1; //Node was once alive, but not anymre. It is sus
 pub const STATUS_ALIVE: u32 = 2; //Node is currently alive, and could become dead
 pub const STATUS_NEVER_ALIVE: u32 = 3; //Node is not alive, and cannot die
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct Node {
-    pub leftChildIndex: u32, // Index in node buffer set to max uint32 (INVALID_INDEX) for null
-    pub rightChildIndex: u32, // Index node buffer set to max unint32 (INVALID_INDEX) for null
-    pub parentIndex: u32,    // Index node buffer set to max unint32 (INVALID_INDEX) for null
-    pub age: u32,            // Age of plant in ticks
-    pub archetype: u32,      // Index of archetype in archetype table. Invalid archetype -> Dead
-    pub status: u32,         // Current status of this plant
-    pub area: f32,           // The plant's area (used for photosynthesis, etc)
-    pub length: f32,         // Length of component
-    pub visible: u32,        // If the node is visible
-    pub absolutePosition: [f32; 3], // Absolute offset if there is no parent node
-    pub transformation: [[f32; 4]; 4], //Transformation from parent node
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeBuffer {
     node_list: Vec<Node>,
     free_stack: Vec<u32>,
@@ -40,6 +28,27 @@ pub struct NodeBuffer {
 }
 
 impl NodeBuffer {
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<NodeMetadata>> {
+        CpuAccessibleBuffer::from_data(
+            device.clone(),
+            BufferUsage::uniform_buffer(),
+            NodeMetadata {
+                freePtr: self.free_ptr,
+                nodeDataCapacity: self.max_size,
+            },
+        )
+        .unwrap()
+    }
+
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Node]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.node_list.to_vec().drain(..),
+        )
+        .unwrap()
+    }
+
     pub fn new(size: u32) -> NodeBuffer {
         if size == 0 || size == INVALID_INDEX {
             panic!("invalid size for node buffer")
@@ -106,7 +115,7 @@ impl NodeBuffer {
             let node = &self.node_list[node_index as usize];
             if node.status != STATUS_GARBAGE && node.parentIndex == INVALID_INDEX {
                 vertex_list.append(&mut self.gen_node_vertex(
-                    tov(node.absolutePosition),
+                    tov(node.absolutePositionCache),
                     Matrix4::one(),
                     node_index,
                 ));
@@ -261,13 +270,15 @@ impl Node {
             rightChildIndex: INVALID_INDEX,
             parentIndex: INVALID_INDEX,
             age: 0,
-            archetype: INVALID_ARCHETYPE_INDEX,
+            archetypeId: INVALID_ARCHETYPE_INDEX,
             status: STATUS_GARBAGE,
             visible: 0,
             area: 0.0,
             length: 0.0,
-            absolutePosition: [0.0, 0.0, 0.0],
+            absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
+            _dummy0: [0; 12],
+            _dummy1: [0; 4],
         }
     }
 }
