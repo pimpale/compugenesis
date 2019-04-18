@@ -46,6 +46,11 @@ use std::sync::RwLock;
 
 use cgmath::{Deg, Matrix4, Point3, Rad};
 
+use shader::gridupdategrid::ty::GridCell;
+use shader::gridupdategrid::ty::GridMetadata;
+use shader::nodeupdategrid::ty::Node;
+use shader::nodeupdategrid::ty::NodeMetadata;
+
 mod util;
 
 mod archetype;
@@ -176,7 +181,7 @@ fn main() {
 
         n1.status = STATUS_ALIVE;
         n1.visible = 1;
-        n1.absolutePosition = [0.0, 0.0, 0.0];
+        n1.absolutePositionCache = [0.0, 0.0, 0.0];
         n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
         n1.length = 0.4;
 
@@ -240,7 +245,7 @@ fn main() {
     let nodeCapacity = 50;
 
     let mut data = vec![
-        shader::gridupdategrid::ty::GridCell {
+        GridCell {
             typeCode: shader::GRIDCELL_TYPE_INVALID_MATERIAL,
             temperature: 0.0,
             moisture: 0.0,
@@ -254,20 +259,19 @@ fn main() {
     for x in 0..sim_x_size {
         for y in 0..sim_y_size {
             for z in 0..sim_z_size {
-                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] =
-                    shader::gridupdategrid::ty::GridCell {
-                        //Initialize the array to be filled with dirt halfway
-                        typeCode: if z > sim_z_size / 2 {
-                            shader::GRIDCELL_TYPE_AIR
-                        } else {
-                            shader::GRIDCELL_TYPE_SOIL
-                        },
-                        temperature: 0.0,
-                        moisture: 0.0,
-                        sunlight: 0.0,
-                        gravity: 0.0,
-                        plantDensity: 0.0,
-                    };
+                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] = GridCell {
+                    //Initialize the array to be filled with dirt halfway
+                    typeCode: if z > sim_z_size / 2 {
+                        shader::GRIDCELL_TYPE_AIR
+                    } else {
+                        shader::GRIDCELL_TYPE_SOIL
+                    },
+                    temperature: 0.0,
+                    moisture: 0.0,
+                    sunlight: 0.0,
+                    gravity: 0.0,
+                    plantDensity: 0.0,
+                };
             }
         }
     }
@@ -278,7 +282,7 @@ fn main() {
     let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
         device.clone(),
         BufferUsage::uniform_buffer(),
-        shader::gridupdategrid::ty::GridMetadata {
+        GridMetadata {
             xsize: sim_x_size,
             ysize: sim_y_size,
             zsize: sim_z_size,
