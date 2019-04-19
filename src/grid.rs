@@ -25,6 +25,32 @@ pub struct GridBuffer {
     zsize: u32,
 }
 
+impl GridBuffer {
+    pub fn new(xsize: u32, ysize: u32, zsize: u32) -> GridBuffer {
+        GridBuffer {
+            xsize: xsize,
+            ysize: ysize,
+            zsize: zsize,
+            grid_cells: vec![GridCell::new(); (xsize * ysize * zsize) as usize],
+        }
+    }
+
+    fn toId(&self, x: u32, y: u32, z: u32) -> usize {
+        (self.ysize * self.xsize * z + self.xsize * y + x) as usize
+    }
+
+    pub fn get(&self, x: u32, y: u32, z: u32) -> GridCell {
+        self.grid_cells[toId(x, y, z)].clone()
+    }
+
+    pub fn set(&mut self, cell:GridCell, x:u32, y:u32, z:u32) -> () {
+        self.grid_cells[toId(x,y,z)] = cell.clone();
+    }
+
+    pub 
+
+}
+
 impl GridCell {
     pub fn new() -> GridCell {
         GridCell {
