@@ -40,15 +40,35 @@ impl GridBuffer {
     }
 
     pub fn get(&self, x: u32, y: u32, z: u32) -> GridCell {
-        self.grid_cells[toId(x, y, z)].clone()
+        self.grid_cells[self.toId(x, y, z)].clone()
     }
 
-    pub fn set(&mut self, cell:GridCell, x:u32, y:u32, z:u32) -> () {
-        self.grid_cells[toId(x,y,z)] = cell.clone();
+    pub fn set(&mut self, x: u32, y: u32, z: u32, cell: GridCell) -> () {
+        let id = self.toId(x, y, z);
+        self.grid_cells[id] = cell.clone();
     }
 
-    pub 
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<GridMetadata>> {
+        CpuAccessibleBuffer::from_data(
+            device.clone(),
+            BufferUsage::uniform_buffer(),
+            GridMetadata {
+                xsize: self.xsize,
+                ysize: self.ysize,
+                zsize: self.zsize,
+            },
+        )
+        .unwrap()
+    }
 
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[GridCell]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.grid_cells.to_vec().drain(..),
+        )
+        .unwrap()
+    }
 }
 
 impl GridCell {

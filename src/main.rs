@@ -55,11 +55,13 @@ mod util;
 
 mod archetype;
 mod camera;
+mod grid;
 mod node;
 mod shader;
 mod vertex;
 
 use camera::*;
+use grid::*;
 use node::*;
 
 fn create_instance() -> Arc<Instance> {
@@ -244,51 +246,35 @@ fn main() {
 
     let nodeCapacity = 50;
 
-    let mut data = vec![
-        GridCell {
-            typeCode: shader::GRIDCELL_TYPE_INVALID_MATERIAL,
-            temperature: 0.0,
-            moisture: 0.0,
-            sunlight: 0.0,
-            gravity: 0.0,
-            plantDensity: 0.0,
-        };
-        (sim_x_size * sim_y_size * sim_z_size) as usize
-    ];
+    let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
     for x in 0..sim_x_size {
         for y in 0..sim_y_size {
             for z in 0..sim_z_size {
-                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] = GridCell {
-                    //Initialize the array to be filled with dirt halfway
-                    typeCode: if z > sim_z_size / 2 {
-                        shader::GRIDCELL_TYPE_AIR
-                    } else {
-                        shader::GRIDCELL_TYPE_SOIL
+                grid_buffer.set(
+                    x,
+                    y,
+                    z,
+                    GridCell {
+                        //Initialize the array to be filled with dirt halfway
+                        typeCode: if z > sim_z_size / 2 {
+                            grid::GRIDCELL_TYPE_AIR
+                        } else {
+                            grid::GRIDCELL_TYPE_SOIL
+                        },
+                        temperature: 0.0,
+                        moisture: 0.0,
+                        sunlight: 0.0,
+                        gravity: 0.0,
+                        plantDensity: 0.0,
                     },
-                    temperature: 0.0,
-                    moisture: 0.0,
-                    sunlight: 0.0,
-                    gravity: 0.0,
-                    plantDensity: 0.0,
-                };
+                );
             }
         }
     }
 
-    let grid_data_buffer =
-        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.drain(..)).unwrap();
-
-    let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
-        device.clone(),
-        BufferUsage::uniform_buffer(),
-        GridMetadata {
-            xsize: sim_x_size,
-            ysize: sim_y_size,
-            zsize: sim_z_size,
-        },
-    )
-    .unwrap();
+    let grid_data_buffer = grid_buffer.gen_data(device.clone());
+    let grid_metadata_buffer = grid_buffer.gen_metadata(device.clone());
 
     let node_metadata_buffer = node_buffer.gen_metadata(device.clone());
     let node_data_buffer = node_buffer.gen_data(device.clone());
