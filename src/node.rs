@@ -49,6 +49,15 @@ impl NodeBuffer {
         .unwrap()
     }
 
+    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.free_stack.to_vec().drain(..),
+        )
+        .unwrap()
+    }
+
     pub fn new(size: u32) -> NodeBuffer {
         if size == 0 || size == INVALID_INDEX {
             panic!("invalid size for node buffer")
@@ -273,11 +282,12 @@ impl Node {
             archetypeId: INVALID_ARCHETYPE_INDEX,
             status: STATUS_GARBAGE,
             visible: 0,
-            area: 0.0,
             length: 0.0,
+            area: 0.0,
+            volume: 0.0,
             absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
-            _dummy0: [0; 12],
+            _dummy0: [0; 8],
             _dummy1: [0; 4],
         }
     }

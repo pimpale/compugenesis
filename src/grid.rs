@@ -75,11 +75,11 @@ impl GridCell {
     pub fn new() -> GridCell {
         GridCell {
             typeCode: GRIDCELL_TYPE_INVALID_MATERIAL,
-            temperature: 0.0,
-            moisture: 0.0,
-            sunlight: 0.0,
-            gravity: 0.0,
-            plantDensity: 0.0,
+            temperature: 0,
+            moisture: 0,
+            sunlight: 0,
+            gravity: 0,
+            plantDensity: 0,
         }
     }
 }

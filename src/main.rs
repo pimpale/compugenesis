@@ -186,6 +186,8 @@ fn main() {
         n1.absolutePositionCache = [0.0, 0.0, 0.0];
         n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
         n1.length = 0.4;
+        n1.area = 0.1;
+        n1.volume = 0.1;
 
         node_buffer.set(i1, n1);
     }
@@ -262,11 +264,11 @@ fn main() {
                         } else {
                             grid::GRIDCELL_TYPE_SOIL
                         },
-                        temperature: 0.0,
-                        moisture: 0.0,
-                        sunlight: 0.0,
-                        gravity: 0.0,
-                        plantDensity: 0.0,
+                        temperature: 0,
+                        moisture: 0,
+                        sunlight: 0,
+                        gravity: 0,
+                        plantDensity: 0,
                     },
                 );
             }
@@ -280,13 +282,32 @@ fn main() {
     let node_data_buffer = node_buffer.gen_data(device.clone());
 
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
+    let nodeupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
 
     let gridupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
     );
 
+    let nodeupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
     let gridupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let nodeupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
             .add_buffer(grid_metadata_buffer.clone())
             .unwrap()
             .add_buffer(grid_data_buffer.clone())
@@ -312,20 +333,6 @@ fn main() {
 
     let nodeupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
-    );
-
-    let nodeupdategrid_set = Arc::new(
-        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
-            .add_buffer(node_metadata_buffer.clone())
-            .unwrap()
-            .add_buffer(node_data_buffer.clone())
-            .unwrap()
-            .add_buffer(grid_metadata_buffer.clone())
-            .unwrap()
-            .add_buffer(grid_data_buffer.clone())
-            .unwrap()
-            .build()
-            .unwrap(),
     );
 
     let compute_future = sync::now(device.clone())
