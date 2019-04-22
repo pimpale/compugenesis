@@ -84,6 +84,7 @@ void main() {
     if(nid < nodeData.nodes.length() 
         && nodeData.nodes[nid].status != NODE_STATUS_GARBAGE) {
         Node n = nodeData.nodes[nid];
+        nodeData.nodes[nid].age += 1;
         uint gid = getGridId(n.absolutePositionCache);
         uint vol = int(n.volume*pow(100, 3));
         atomicAdd(gridData.gridCell[gid].plantDensity, vol);

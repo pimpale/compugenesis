@@ -175,23 +175,6 @@ fn main() {
         .unwrap()
     };
 
-    let mut node_buffer = NodeBuffer::new(10000);
-    {
-        let i1 = node_buffer.alloc().unwrap();
-
-        let mut n1 = Node::new();
-
-        n1.status = STATUS_ALIVE;
-        n1.visible = 1;
-        n1.absolutePositionCache = [0.0, 0.0, 0.0];
-        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
-        n1.length = 0.4;
-        n1.area = 0.1;
-        n1.volume = 0.1;
-
-        node_buffer.set(i1, n1);
-    }
-
     let vs = shader::vert::Shader::load(device.clone()).unwrap();
     let fs = shader::frag::Shader::load(device.clone()).unwrap();
 
@@ -246,8 +229,24 @@ fn main() {
     let sim_y_size: u32 = 10;
     let sim_z_size: u32 = 10;
 
-    let nodeCapacity = 50;
+    let node_capacity = 50;
 
+    let mut node_buffer = NodeBuffer::new(nodeCapacity);
+    {
+        let i1 = node_buffer.alloc().unwrap();
+
+        let mut n1 = Node::new();
+
+        n1.status = STATUS_ALIVE;
+        n1.visible = 1;
+        n1.absolutePositionCache = [0.0, 0.0, 0.0];
+        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
+        n1.length = 0.4;
+        n1.area = 0.1;
+        n1.volume = 0.1;
+
+        node_buffer.set(i1, n1);
+    }
     let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
     for x in 0..sim_x_size {
@@ -282,7 +281,7 @@ fn main() {
     let node_data_buffer = node_buffer.gen_data(device.clone());
 
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
-    let nodeupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
+    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
 
     let gridupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
@@ -329,19 +328,36 @@ fn main() {
             .build()
             .unwrap();
 
-    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
-
-    let nodeupdategrid_pipeline = Arc::new(
-        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
-    );
+    let nodeupdategrid_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                nodeupdategrid_pipeline.clone(),
+                nodeupdategrid_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
 
     let compute_future = sync::now(device.clone())
         .then_execute(queue.clone(), gridupdategrid_command_buffer)
         .unwrap()
         .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), nodeupdategrid_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
         .unwrap();
 
     compute_future.wait(None).unwrap();
+
+    {
+        let vec = node_data_buffer.read().unwrap();
+        let u32vec: Vec<u32> = vec.iter().map(|n| n.age).collect();
+        dbg!(u32vec);
+    }
 
     return;
 
