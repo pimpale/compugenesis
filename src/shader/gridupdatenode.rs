@@ -55,7 +55,6 @@ uint getGridCellId(uint x, uint y, uint z) {
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    nodeData.nodes[id].age++;
 }
 "
 }

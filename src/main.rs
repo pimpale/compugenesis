@@ -416,6 +416,14 @@ fn main() {
         .then_execute(queue.clone(), nodeupdategrid_command_buffer)
         .unwrap()
         .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), gridupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), nodeupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
         .unwrap();
 
     compute_future.wait(None).unwrap();
