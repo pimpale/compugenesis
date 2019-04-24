@@ -231,7 +231,7 @@ fn main() {
 
     let node_capacity = 50;
 
-    let mut node_buffer = NodeBuffer::new(nodeCapacity);
+    let mut node_buffer = NodeBuffer::new(node_capacity);
     {
         let i1 = node_buffer.alloc().unwrap();
 
@@ -279,9 +279,12 @@ fn main() {
 
     let node_metadata_buffer = node_buffer.gen_metadata(device.clone());
     let node_data_buffer = node_buffer.gen_data(device.clone());
+    let node_freestack_buffer = node_buffer.gen_freestack(device.clone());
 
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
     let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
+    let gridupdatenode = shader::gridupdatenode::Shader::load(device.clone()).unwrap();
+    let nodeupdatenode = shader::nodeupdatenode::Shader::load(device.clone()).unwrap();
 
     let gridupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
@@ -289,6 +292,14 @@ fn main() {
 
     let nodeupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let gridupdatenode_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &gridupdatenode.main_entry_point(), &()).unwrap(),
+    );
+
+    let nodeupdatenode_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdatenode.main_entry_point(), &()).unwrap(),
     );
 
     let gridupdategrid_set = Arc::new(
@@ -303,6 +314,34 @@ fn main() {
 
     let nodeupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let gridupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let nodeupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdatenode_pipeline.clone(), 0)
             .add_buffer(node_metadata_buffer.clone())
             .unwrap()
             .add_buffer(node_data_buffer.clone())
@@ -335,6 +374,32 @@ fn main() {
                 [node_buffer.size(), 1, 1],
                 nodeupdategrid_pipeline.clone(),
                 nodeupdategrid_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let gridupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                gridupdatenode_pipeline.clone(),
+                gridupdatenode_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let nodeupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                nodeupdatenode_pipeline.clone(),
+                nodeupdatenode_set.clone(),
                 (),
             )
             .unwrap()
