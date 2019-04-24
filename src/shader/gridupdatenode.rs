@@ -28,27 +28,25 @@ struct GridCell {
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) uniform GridMetadata {
-    uint xsize;
-    uint ysize;
-    uint zsize;
-}
-gridMetadata;
 
-layout(binding = 1) uniform NodeMetadata {
+layout(binding = 0) uniform NodeMetadata {
     uint nodeDataCount;
     uint nodeDataCapacity;
 } nodeMetadata;
 
-layout(binding = 2) buffer NodeBuffer { 
+layout(binding = 1) buffer NodeBuffer { 
     Node nodes[]; 
-}
-nodeData;
+} nodeData;
+
+layout(binding = 2) uniform GridMetadata {
+    uint xsize;
+    uint ysize;
+    uint zsize;
+} gridMetadata;
 
 layout(binding = 3) buffer GridBuffer { 
     GridCell gridCell[]; 
-}
-gridData;
+} gridData;
 
 uint getGridCellId(uint x, uint y, uint z) {
     return (gridMetadata.xsize * gridMetadata.ysize * z +

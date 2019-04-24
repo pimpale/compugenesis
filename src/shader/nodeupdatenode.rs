@@ -59,13 +59,17 @@ layout(binding = 1) buffer NodeData {
   Node nodes[];
 } nodeData;
 
-layout(binding = 2) uniform GridMetadata {
+layout(binding = 2) buffer NodeFreeStack {
+    uint freeStack[];
+} nodeFreeStack;
+
+layout(binding = 3) uniform GridMetadata {
   uint xsize;
   uint ysize;
   uint zsize;
 } gridMetadata;
 
-layout(binding = 3) buffer GridData {
+layout(binding = 4) buffer GridData {
   GridCell gridCell[];
 } gridData;
 
@@ -76,7 +80,7 @@ void main() {
     if(nid < nodeData.nodes.length() 
         && nodeData.nodes[nid].status != NODE_STATUS_GARBAGE) {
         //increase age
-        atomicIncrement(nodeData.nodes[nid].age);
+        atomicAdd(nodeData.nodes[nid].age, 1);
     }
 }
 "

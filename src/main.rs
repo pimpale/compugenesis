@@ -346,6 +346,8 @@ fn main() {
             .unwrap()
             .add_buffer(node_data_buffer.clone())
             .unwrap()
+            .add_buffer(node_freestack_buffer.clone())
+            .unwrap()
             .add_buffer(grid_metadata_buffer.clone())
             .unwrap()
             .add_buffer(grid_data_buffer.clone())
