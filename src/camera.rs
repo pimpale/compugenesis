@@ -1,4 +1,4 @@
-use cgmath::{Angle, Deg, InnerSpace, Matrix4, One, Point3, Rad, Vector3};
+use cgmath::{Angle, Deg, InnerSpace, Matrix4, One, Point3, Rad, Vector3, Vector4};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -24,20 +24,11 @@ pub enum CameraRotationDir {
 pub struct Camera {
     begin_time: Instant,
 
-    screen_x: u32, //Horizontal size of screen
-    screen_y: u32, //Vertical size of screen
-
-    worldup: Vector3<f32>, // The normalized vector that the camera percieves to be up
-
-    yaw: Rad<f32>,   //Euler angle side to side motion
-    pitch: Rad<f32>, //Euler angle up and down motion (roll is gon
-
-    loc: Point3<f32>, // The camera's location in 3d space
-
-    up: Vector3<f32>,    //Vector pointing up above the camera
-    front: Vector3<f32>, // Vector pointing in front of the camera
-    right: Vector3<f32>, // Vector pointing to the right of the camera
-
+    screen_x: u32,            //Horizontal size of screen
+    screen_y: u32,            //Vertical size of screen
+    worldup: Vector3<f32>,    // The normalized vector that the camera percieves to be up
+    rotation: Matrix4<f32>,   // The rotation of the camera
+    loc: Point3<f32>,         // The camera's location in 3d space
     projection: Matrix4<f32>, // Projection Matrix
     model: Matrix4<f32>,      // Model Matrix
     view: Matrix4<f32>,       // View Matrix
@@ -50,20 +41,15 @@ impl Camera {
             screen_x: screen_x,
             screen_y: screen_y,
             worldup: Vector3::new(0.0, 1.0, 0.0),
-            yaw: Rad(0.0),
-            pitch: Rad(0.0),
             loc: location,
-            up: Vector3::new(0.0, 0.0, 0.0),
-            front: Vector3::new(0.0, 0.0, 0.0),
-            right: Vector3::new(0.0, 0.0, 0.0),
             projection: Matrix4::one(),
             model: Matrix4::one(),
             view: Matrix4::one(),
+            rotation: Matrix4::one(),
         };
         cam.genmodel();
         cam.genview();
         cam.genprojection();
-        cam.genvectors();
         cam
     }
 
@@ -75,8 +61,13 @@ impl Camera {
         self.setloc(self.loc + delta);
     }
 
-    pub fn rotate(&mut self, dyaw: Rad<f32>, dpitch: Rad<f32>) -> () {
-        self.setrot(self.yaw + dyaw, self.pitch + dpitch);
+    pub fn translate_rot(&mut self, delta: Vector3<f32>) -> () {
+        let newvec = self.rotation * Vector4::new(delta.x, delta.y, delta.z, 1.0);
+        self.translate(Vector3::new(newvec.x, newvec.y, newvec.z));
+    }
+
+    pub fn rotate(&mut self, rot: Matrix4<f32>) -> () {
+        self.setrot(self.rotation * rot);
     }
 
     pub fn setloc(&mut self, loc: Point3<f32>) {
@@ -84,32 +75,28 @@ impl Camera {
         self.genview();
     }
 
-    pub fn setrot(&mut self, yaw: Rad<f32>, pitch: Rad<f32>) -> () {
-        self.yaw = yaw;
-        self.pitch = pitch;
-        self.genvectors();
+    pub fn setrot(&mut self, rot: Matrix4<f32>) -> () {
+        self.rotation = rot;
     }
 
     pub fn dir_move(&mut self, dir: CameraMovementDir) -> () {
+        let scale = 0.1;
         match dir {
-            CameraMovementDir::Forward => {
-                print!("hello");
-                self.translate(self.front)
-            }
-            CameraMovementDir::Backward => self.translate(-self.front),
-            CameraMovementDir::Right => self.translate(self.right),
-            CameraMovementDir::Left => self.translate(-self.right),
-            CameraMovementDir::Upward => self.translate(self.up),
-            CameraMovementDir::Downward => self.translate(-self.up),
+            CameraMovementDir::Forward => self.translate_rot(Vector3::unit_z() * scale),
+            CameraMovementDir::Backward => self.translate_rot(-Vector3::unit_z() * scale),
+            CameraMovementDir::Right => self.translate_rot(Vector3::unit_x() * scale),
+            CameraMovementDir::Left => self.translate_rot(-Vector3::unit_x() * scale),
+            CameraMovementDir::Upward => self.translate_rot(Vector3::unit_y() * scale),
+            CameraMovementDir::Downward => self.translate_rot(-Vector3::unit_y() * scale),
         }
     }
 
     pub fn dir_rotate(&mut self, dir: CameraRotationDir) -> () {
         match dir {
-            CameraRotationDir::Right => self.rotate(Rad::from(Deg(1.0)), Rad::from(Deg(1.0))),
-            CameraRotationDir::Left => self.rotate(Rad::from(Deg(1.0)), Rad::from(Deg(1.0))),
-            CameraRotationDir::Upward => self.rotate(Rad::from(Deg(1.0)), Rad::from(Deg(1.0))),
-            CameraRotationDir::Downward => self.rotate(Rad::from(Deg(1.0)), Rad::from(Deg(1.0))),
+            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
+            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(-0.01))),
+            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.01))),
+            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.01))),
         }
     }
 
@@ -123,7 +110,14 @@ impl Camera {
         // Look at the place in front of us
         //self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
         //
-        self.view = Matrix4::look_at(self.loc, Point3::new(0.0, 0.0, 0.0), self.worldup);
+        dbg!(self.loc);
+        //dbg!(self.loc + self.front);
+        self.view = Matrix4::look_at(
+            self.loc,
+            //self.loc + self.front,
+            Point3::new(0.0, 0.0, 0.0),
+            self.worldup,
+        );
     }
 
     fn genmodel(&mut self) -> () {
@@ -134,22 +128,5 @@ impl Camera {
         let aspect_ratio = self.screen_x as f32 / self.screen_y as f32;
         self.projection =
             cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
-    }
-
-    fn genvectors(&mut self) -> () {
-        // Calculate the new Front vector
-        self.front = Vector3::new(
-            (self.yaw * self.pitch.cos()).cos(),
-            (self.pitch).sin(),
-            (self.yaw * self.pitch.cos()).sin(),
-        )
-        .normalize()
-            * 0.1;
-
-        // Also re-calculate the Right and Up vector
-        // Normalize the vectors, because their length gets closer to 0
-        // the more you look up or down which results in slower movement.
-        self.right = self.front.cross(self.worldup).normalize() * 0.1;
-        self.up = self.right.cross(self.front).normalize() * 0.1;
     }
 }

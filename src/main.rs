@@ -585,7 +585,7 @@ fn main() {
     }
 }
 
-fn getMvp(rotation_start: Instant, dimensions: [u32; 2]) -> Matrix4<f32> {
+fn get_mvp(rotation_start: Instant, dimensions: [u32; 2]) -> Matrix4<f32> {
     let elapsed = rotation_start.elapsed();
     let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_00.0;
     let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
