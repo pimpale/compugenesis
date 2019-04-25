@@ -143,12 +143,13 @@ impl Camera {
             (self.pitch).sin(),
             (self.yaw * self.pitch.cos()).sin(),
         )
-        .normalize();
+        .normalize()
+            * 0.1;
 
         // Also re-calculate the Right and Up vector
         // Normalize the vectors, because their length gets closer to 0
         // the more you look up or down which results in slower movement.
-        self.right = self.front.cross(self.worldup).normalize();
-        self.up = self.right.cross(self.front).normalize();
+        self.right = self.front.cross(self.worldup).normalize() * 0.1;
+        self.up = self.right.cross(self.front).normalize() * 0.1;
     }
 }
