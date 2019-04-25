@@ -1,4 +1,6 @@
 use cgmath::{Angle, Deg, InnerSpace, Matrix4, One, Point3, Rad, Vector3};
+use std::time::Duration;
+use std::time::Instant;
 
 #[allow(dead_code)]
 
@@ -20,9 +22,10 @@ pub enum CameraRotationDir {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Camera {
-    fovy: Rad<f32>, //Vertical field of view
-    screen_x: u32,  //Horizontal size of screen
-    screen_y: u32,  //Vertical size of screen
+    begin_time: Instant,
+
+    screen_x: u32, //Horizontal size of screen
+    screen_y: u32, //Vertical size of screen
 
     worldup: Vector3<f32>, // The normalized vector that the camera percieves to be up
 
@@ -41,9 +44,9 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(location: Point3<f32>, screen_x: u32, screen_y: u32, fovy: Rad<f32>) -> Camera {
+    pub fn new(location: Point3<f32>, screen_x: u32, screen_y: u32) -> Camera {
         let mut cam = Camera {
-            fovy: fovy,
+            begin_time: Instant::now(),
             screen_x: screen_x,
             screen_y: screen_y,
             worldup: Vector3::new(0.0, 1.0, 0.0),
@@ -65,8 +68,7 @@ impl Camera {
     }
 
     pub fn mvp(&self) -> Matrix4<f32> {
-        //self.projection * self.view * self.model
-        self.view * self.model
+        self.projection * self.view * self.model
     }
 
     pub fn translate(&mut self, delta: Vector3<f32>) -> () {
@@ -119,7 +121,9 @@ impl Camera {
 
     fn genview(&mut self) -> () {
         // Look at the place in front of us
-        self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
+        //self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
+        //
+        self.view = Matrix4::look_at(self.loc, Point3::new(0.0, 0.0, 0.0), self.worldup);
     }
 
     fn genmodel(&mut self) -> () {
@@ -127,12 +131,9 @@ impl Camera {
     }
 
     fn genprojection(&mut self) -> () {
-        self.projection = cgmath::perspective(
-            self.fovy,
-            self.screen_x as f32 / self.screen_y as f32,
-            0.1,
-            100.0,
-        )
+        let aspect_ratio = self.screen_x as f32 / self.screen_y as f32;
+        self.projection =
+            cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
     }
 
     fn genvectors(&mut self) -> () {

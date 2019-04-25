@@ -33,6 +33,7 @@ use vulkano::sync::GpuFuture;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use gio::prelude::*;
 use gio::ApplicationFlags;
@@ -46,7 +47,7 @@ use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEven
 
 use std::sync::RwLock;
 
-use cgmath::{Deg, Matrix4, Point3, Rad};
+use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
 
 use shader::gridupdategrid::ty::GridCell;
 use shader::gridupdategrid::ty::GridMetadata;
@@ -217,7 +218,7 @@ fn main() {
         scissors: None,
     };
 
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50, Rad::from(Deg(90.0)));
+    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50);
     let mut framebuffers = window_size_dependent_setup(
         &images,
         render_pass.clone(),
@@ -233,7 +234,7 @@ fn main() {
     let sim_z_size: u32 = 10;
 
     // The maximum node capacity of the node buffer
-    let mut node_buffer = NodeBuffer::new(50);
+    let mut node_buffer = NodeBuffer::new(500);
     {
         let i1 = node_buffer.alloc();
 
@@ -449,6 +450,8 @@ fn main() {
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
+    let start = Instant::now();
+
     loop {
         // Add delay
         thread::sleep(Duration::from_millis(40));
@@ -513,6 +516,7 @@ fn main() {
                     (),
                     shader::vert::ty::PushConstantData {
                         mvp: camera.mvp().into(),
+                        //mvp: getMvp(start, images[0].dimensions()).into(),
                     },
                 )
                 .unwrap()
@@ -579,6 +583,30 @@ fn main() {
             return;
         }
     }
+}
+
+fn getMvp(rotation_start: Instant, dimensions: [u32; 2]) -> Matrix4<f32> {
+    let elapsed = rotation_start.elapsed();
+    let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_00.0;
+    let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
+
+    // note: this teapot was meant for OpenGL where the origin is at the lower left
+    //       instead the origin is at the upper left in Vulkan, so we reverse the Y axis
+    let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
+    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
+    let view = Matrix4::look_at(
+        Point3::new(0.3, 0.3, 1.0),
+        Point3::new(0.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+    );
+
+    //let scale = Matrix4::from_scale(1.0);
+
+    let proj = proj;
+    let view = view; //* scale;
+    let world = Matrix4::from(rotation);
+
+    proj * view * world
 }
 
 #[derive(Debug, Clone, Copy)]
