@@ -66,7 +66,7 @@ impl Camera {
 
     pub fn mvp(&self) -> Matrix4<f32> {
         //self.projection * self.view * self.model
-        self.model
+        self.view * self.model
     }
 
     pub fn translate(&mut self, delta: Vector3<f32>) -> () {

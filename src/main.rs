@@ -31,6 +31,8 @@ use vulkano::sync;
 use vulkano::sync::GpuFuture;
 
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use gio::prelude::*;
 use gio::ApplicationFlags;
@@ -225,15 +227,15 @@ fn main() {
 
     //Compute stuff
 
+    // The 3d size of the simulation in meters
     let sim_x_size: u32 = 10;
     let sim_y_size: u32 = 10;
     let sim_z_size: u32 = 10;
 
-    let node_capacity = 50;
-
-    let mut node_buffer = NodeBuffer::new(node_capacity);
+    // The maximum node capacity of the node buffer
+    let mut node_buffer = NodeBuffer::new(50);
     {
-        let i1 = node_buffer.alloc().unwrap();
+        let i1 = node_buffer.alloc();
 
         let mut n1 = Node::new();
 
@@ -273,7 +275,8 @@ fn main() {
             }
         }
     }
-
+    /*
+    // GPU Buffers that will be used for the data
     let grid_data_buffer = grid_buffer.gen_data(device.clone());
     let grid_metadata_buffer = grid_buffer.gen_metadata(device.clone());
 
@@ -281,11 +284,13 @@ fn main() {
     let node_data_buffer = node_buffer.gen_data(device.clone());
     let node_freestack_buffer = node_buffer.gen_freestack(device.clone());
 
+    // Load shaders
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
     let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
     let gridupdatenode = shader::gridupdatenode::Shader::load(device.clone()).unwrap();
     let nodeupdatenode = shader::nodeupdatenode::Shader::load(device.clone()).unwrap();
 
+    // Create pipelines for shaders
     let gridupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
     );
@@ -302,6 +307,7 @@ fn main() {
         ComputePipeline::new(device.clone(), &nodeupdatenode.main_entry_point(), &()).unwrap(),
     );
 
+    // Create descriptor sets where the buffers can be placed
     let gridupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
             .add_buffer(grid_metadata_buffer.clone())
@@ -356,6 +362,7 @@ fn main() {
             .unwrap(),
     );
 
+    // Create command buffers that describe how the shader is to be exected
     let gridupdategrid_command_buffer =
         AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
             .unwrap()
@@ -408,6 +415,7 @@ fn main() {
             .build()
             .unwrap();
 
+    // We execute each shader in order, making sure to flush all changes before next
     let compute_future = sync::now(device.clone())
         .then_execute(queue.clone(), gridupdategrid_command_buffer)
         .unwrap()
@@ -426,6 +434,7 @@ fn main() {
         .then_signal_fence_and_flush()
         .unwrap();
 
+    // Waits for all computation to finish
     compute_future.wait(None).unwrap();
 
     {
@@ -434,13 +443,15 @@ fn main() {
         dbg!(u32vec);
     }
 
-    return;
+    */
 
     let mut recreate_swapchain = false;
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
     loop {
+        // Add delay
+        thread::sleep(Duration::from_millis(40));
         //Graphics
 
         previous_frame_end.cleanup_finished();
