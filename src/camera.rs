@@ -62,8 +62,7 @@ impl Camera {
     }
 
     pub fn translate_rot(&mut self, delta: Vector3<f32>) -> () {
-        let newvec = self.rotation * Vector4::new(delta.x, delta.y, delta.z, 1.0);
-        self.translate(Vector3::new(newvec.x, newvec.y, newvec.z));
+        self.translate(self.rotate_by_camera(delta));
     }
 
     pub fn rotate(&mut self, rot: Matrix4<f32>) -> () {
@@ -77,6 +76,7 @@ impl Camera {
 
     pub fn setrot(&mut self, rot: Matrix4<f32>) -> () {
         self.rotation = rot;
+        self.genview();
     }
 
     pub fn dir_move(&mut self, dir: CameraMovementDir) -> () {
@@ -93,8 +93,8 @@ impl Camera {
 
     pub fn dir_rotate(&mut self, dir: CameraRotationDir) -> () {
         match dir {
-            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
-            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(-0.01))),
+            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(-0.01))),
+            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
             CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.01))),
             CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.01))),
         }
@@ -106,16 +106,21 @@ impl Camera {
         self.genprojection();
     }
 
+    fn rotate_by_camera(&self, vec: Vector3<f32>) -> Vector3<f32> {
+        let newvec = self.rotation * Vector4::new(vec.x, vec.y, vec.z, 1.0);
+        Vector3::new(newvec.x, newvec.y, newvec.z)
+    }
+
     fn genview(&mut self) -> () {
         // Look at the place in front of us
         //self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
         //
-        dbg!(self.loc);
+        dbg!(self.loc + self.rotate_by_camera(Vector3::unit_z()));
         //dbg!(self.loc + self.front);
         self.view = Matrix4::look_at(
             self.loc,
-            //self.loc + self.front,
-            Point3::new(0.0, 0.0, 0.0),
+            self.loc + self.rotate_by_camera(Vector3::unit_z()),
+            //Point3::new(0.0, 0.0, 0.0),
             self.worldup,
         );
     }

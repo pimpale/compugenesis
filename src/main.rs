@@ -564,9 +564,9 @@ fn main() {
                 let kc = input.virtual_keycode;
                 if kc.is_some() {
                     match kc.unwrap() {
-                        VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Upward),
+                        VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Forward),
                         VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
-                        VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Downward),
+                        VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
                         VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
 
                         VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
