@@ -3,10 +3,14 @@
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
-use std::ops::Add;
 
 use super::archetype::INVALID_ARCHETYPE_INDEX;
+use super::shader::nodeupdategrid::ty::Node;
+use super::shader::nodeupdategrid::ty::NodeMetadata;
 use super::vertex::Vertex;
+use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+use super::vulkano::device::Device;
+use std::sync::Arc;
 
 pub const INVALID_INDEX: u32 = std::u32::MAX;
 
@@ -15,23 +19,7 @@ pub const STATUS_DEAD: u32 = 1; //Node was once alive, but not anymre. It is sus
 pub const STATUS_ALIVE: u32 = 2; //Node is currently alive, and could become dead
 pub const STATUS_NEVER_ALIVE: u32 = 3; //Node is not alive, and cannot die
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct Node {
-    pub leftChildIndex: u32, // Index in node buffer set to max uint32 (INVALID_INDEX) for null
-    pub rightChildIndex: u32, // Index node buffer set to max unint32 (INVALID_INDEX) for null
-    pub parentIndex: u32,    // Index node buffer set to max unint32 (INVALID_INDEX) for null
-    pub age: u32,            // Age of plant in ticks
-    pub archetype: u32,      // Index of archetype in archetype table. Invalid archetype -> Dead
-    pub status: u32,         // Current status of this plant
-    pub area: f32,           // The plant's area (used for photosynthesis, etc)
-    pub length: f32,         // Length of component
-    pub visible: u32,        // If the node is visible
-    pub absolutePosition: [f32; 3], // Absolute offset if there is no parent node
-    pub transformation: [[f32; 4]; 4], //Transformation from parent node
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeBuffer {
     node_list: Vec<Node>,
     free_stack: Vec<u32>,
@@ -40,6 +28,36 @@ pub struct NodeBuffer {
 }
 
 impl NodeBuffer {
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<NodeMetadata>> {
+        CpuAccessibleBuffer::from_data(
+            device.clone(),
+            BufferUsage::uniform_buffer(),
+            NodeMetadata {
+                freePtr: self.free_ptr,
+                nodeDataCapacity: self.max_size,
+            },
+        )
+        .unwrap()
+    }
+
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Node]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.node_list.to_vec().drain(..),
+        )
+        .unwrap()
+    }
+
+    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.free_stack.to_vec().drain(..),
+        )
+        .unwrap()
+    }
+
     pub fn new(size: u32) -> NodeBuffer {
         if size == 0 || size == INVALID_INDEX {
             panic!("invalid size for node buffer")
@@ -61,18 +79,17 @@ impl NodeBuffer {
     }
 
     /// Returns the index of a free spot in the array (user needs to mark the spot as not garbage)
-    pub fn alloc(&mut self) -> Option<u32> {
+    pub fn alloc(&mut self) -> u32 {
         if self.free_ptr == 0 {
-            println!("No Memory Left In Array");
-            None
+            panic!("No Memory Left In NodeBuffer");
         } else {
             self.free_ptr = self.free_ptr - 1;
-            Some(self.free_stack[self.free_ptr as usize])
+            self.free_stack[self.free_ptr as usize]
         }
     }
 
     pub fn alloc_insert(&mut self, node: Node) -> () {
-        let index = self.alloc().unwrap();
+        let index = self.alloc();
         self.set(index, node.clone());
     }
 
@@ -97,6 +114,7 @@ impl NodeBuffer {
         self.max_size - self.free_ptr
     }
 
+    /// Generates a list of vertexes to be rendered
     pub fn gen_vertex(&self) -> Vec<Vertex> {
         //Vector to hold all new vertexes
         let mut vertex_list = Vec::new();
@@ -104,9 +122,11 @@ impl NodeBuffer {
         //search for root node (null parent, visible)
         for node_index in 0..self.max_size {
             let node = &self.node_list[node_index as usize];
+            // If its a root node
             if node.status != STATUS_GARBAGE && node.parentIndex == INVALID_INDEX {
+                // call gen_node_vertex
                 vertex_list.append(&mut self.gen_node_vertex(
-                    tov(node.absolutePosition),
+                    tov(node.absolutePositionCache),
                     Matrix4::one(),
                     node_index,
                 ));
@@ -114,7 +134,7 @@ impl NodeBuffer {
         }
         vertex_list
     }
-
+    /// Internal recursive algorithm that traverses tree structure
     fn gen_node_vertex(
         &self,
         source_point: Vector3<f32>,
@@ -123,7 +143,9 @@ impl NodeBuffer {
     ) -> Vec<Vertex> {
         let mut vertex_list = Vec::new();
         let node = self.node_list[node_index as usize];
+        // The rotation of this node
         let total_rotation = parent_rotation * tomat(node.transformation);
+        // The endpoint in space where this node ends
         let end_loc =
             source_point + total_rotation.transform_vector(Vector3::unit_y() * node.length);
         if node.visible == 1 {
@@ -136,6 +158,7 @@ impl NodeBuffer {
                 color: [0.0, 0.0, 0.0],
             });
         };
+        // Get child vertex_list, and add it to our own
         if node.leftChildIndex != INVALID_INDEX {
             vertex_list.append(&mut self.gen_node_vertex(
                 end_loc,
@@ -143,6 +166,7 @@ impl NodeBuffer {
                 node.leftChildIndex,
             ));
         }
+        // Do the same for the right node
         if node.rightChildIndex != INVALID_INDEX {
             vertex_list.append(&mut self.gen_node_vertex(
                 end_loc,
@@ -150,9 +174,11 @@ impl NodeBuffer {
                 node.rightChildIndex,
             ));
         }
+        // Return the list
         vertex_list
     }
 
+    /// Sets the left child of parent to child, and if child is not invalid, sets its parent to the parent
     pub fn set_left_child(&mut self, parent: u32, child: u32) -> () {
         self.node_list[parent as usize].leftChildIndex = child;
         if child != INVALID_INDEX {
@@ -160,6 +186,7 @@ impl NodeBuffer {
         }
     }
 
+    /// Sets the right child of parent to child, and if child is not invalid, sets its parent to the parent
     pub fn set_right_child(&mut self, parent: u32, child: u32) -> () {
         self.node_list[parent as usize].rightChildIndex = child;
         if child != INVALID_INDEX {
@@ -173,7 +200,7 @@ impl NodeBuffer {
     /// is left empty
     pub fn divide(&mut self, percentbreak: f32, node_index: u32) -> u32 {
         // Allocate a spot for the new node
-        let new_node_index = self.alloc().unwrap();
+        let new_node_index = self.alloc();
 
         //New node shares all properties with old one
         self.node_list[new_node_index as usize] = self.node_list[node_index as usize].clone();
@@ -202,7 +229,7 @@ impl NodeBuffer {
         new_node_index
     }
 
-    /// Does a nodeupdate on all nodes within the buffer that are not garbage
+    /// Does a nodeupdatenode on all nodes within the buffer that are not garbage
     pub fn update_all(&mut self) {
         for i in 0..self.max_size {
             let node = self.node_list[i as usize];
@@ -212,7 +239,7 @@ impl NodeBuffer {
                 self.node_list[i as usize].age += 1;
                 if node.length > 0.007 && node.age < 9000 && r > 0.995 {
                     self.divide(0.5, i);
-                    let ni = self.alloc().unwrap();
+                    let ni = self.alloc();
                     self.node_list[ni as usize] = {
                         let mut nnode = Node::new();
                         nnode.status = STATUS_ALIVE;
@@ -255,19 +282,23 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 impl Node {
+    // Node has some dummy variables and this function makes it easier to create a default instance
     pub fn new() -> Node {
         Node {
             leftChildIndex: INVALID_INDEX,
             rightChildIndex: INVALID_INDEX,
             parentIndex: INVALID_INDEX,
             age: 0,
-            archetype: INVALID_ARCHETYPE_INDEX,
+            archetypeId: INVALID_ARCHETYPE_INDEX,
             status: STATUS_GARBAGE,
             visible: 0,
-            area: 0.0,
             length: 0.0,
-            absolutePosition: [0.0, 0.0, 0.0],
+            area: 0.0,
+            volume: 0.0,
+            absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
+            _dummy0: [0; 8],
+            _dummy1: [0; 4],
         }
     }
 }

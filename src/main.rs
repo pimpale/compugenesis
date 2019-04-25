@@ -31,6 +31,9 @@ use vulkano::sync;
 use vulkano::sync::GpuFuture;
 
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
 
 use gio::prelude::*;
 use gio::ApplicationFlags;
@@ -44,17 +47,24 @@ use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEven
 
 use std::sync::RwLock;
 
-use cgmath::{Deg, Matrix4, Point3, Rad};
+use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
+
+use shader::gridupdategrid::ty::GridCell;
+use shader::gridupdategrid::ty::GridMetadata;
+use shader::nodeupdategrid::ty::Node;
+use shader::nodeupdategrid::ty::NodeMetadata;
 
 mod util;
 
 mod archetype;
 mod camera;
+mod grid;
 mod node;
 mod shader;
 mod vertex;
 
 use camera::*;
+use grid::*;
 use node::*;
 
 fn create_instance() -> Arc<Instance> {
@@ -168,21 +178,6 @@ fn main() {
         .unwrap()
     };
 
-    let mut node_buffer = NodeBuffer::new(10000);
-    {
-        let i1 = node_buffer.alloc().unwrap();
-
-        let mut n1 = Node::new();
-
-        n1.status = STATUS_ALIVE;
-        n1.visible = 1;
-        n1.absolutePosition = [0.0, 0.0, 0.0];
-        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
-        n1.length = 0.4;
-
-        node_buffer.set(i1, n1);
-    }
-
     let vs = shader::vert::Shader::load(device.clone()).unwrap();
     let fs = shader::frag::Shader::load(device.clone()).unwrap();
 
@@ -223,7 +218,7 @@ fn main() {
         scissors: None,
     };
 
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50, Rad::from(Deg(90.0)));
+    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50);
     let mut framebuffers = window_size_dependent_setup(
         &images,
         render_pass.clone(),
@@ -233,63 +228,87 @@ fn main() {
 
     //Compute stuff
 
-    let sim_x_size: u32 = 5;
-    let sim_y_size: u32 = 5;
-    let sim_z_size: u32 = 5;
+    // The 3d size of the simulation in meters
+    let sim_x_size: u32 = 10;
+    let sim_y_size: u32 = 10;
+    let sim_z_size: u32 = 10;
 
-    let mut data = vec![
-        shader::gridupdategrid::ty::GridCell {
-            typeCode: shader::GRIDCELL_TYPE_INVALID_MATERIAL,
-            temperature: 0.0,
-            moisture: 0.0,
-            sunlight: 0.0,
-            gravity: 0.0,
-            plantDensity: 0.0,
-        };
-        (sim_x_size * sim_y_size * sim_z_size) as usize
-    ];
+    // The maximum node capacity of the node buffer
+    let mut node_buffer = NodeBuffer::new(500);
+    {
+        let i1 = node_buffer.alloc();
+
+        let mut n1 = Node::new();
+
+        n1.status = STATUS_ALIVE;
+        n1.visible = 1;
+        n1.absolutePositionCache = [0.0, 0.0, 0.0];
+        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
+        n1.length = 0.4;
+        n1.area = 0.1;
+        n1.volume = 0.1;
+
+        node_buffer.set(i1, n1);
+    }
+    let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
     for x in 0..sim_x_size {
         for y in 0..sim_y_size {
             for z in 0..sim_z_size {
-                data[(sim_y_size * sim_x_size * z + sim_x_size * y + x) as usize] =
-                    shader::gridupdategrid::ty::GridCell {
+                grid_buffer.set(
+                    x,
+                    y,
+                    z,
+                    GridCell {
                         //Initialize the array to be filled with dirt halfway
                         typeCode: if z > sim_z_size / 2 {
-                            shader::GRIDCELL_TYPE_AIR
+                            grid::GRIDCELL_TYPE_AIR
                         } else {
-                            shader::GRIDCELL_TYPE_SOIL
+                            grid::GRIDCELL_TYPE_SOIL
                         },
-                        temperature: 0.0,
-                        moisture: 0.0,
-                        sunlight: 0.0,
-                        gravity: 0.0,
-                        plantDensity: 0.0,
-                    };
+                        temperature: 0,
+                        moisture: 0,
+                        sunlight: 0,
+                        gravity: 0,
+                        plantDensity: 0,
+                    },
+                );
             }
         }
     }
+    /*
+    // GPU Buffers that will be used for the data
+    let grid_data_buffer = grid_buffer.gen_data(device.clone());
+    let grid_metadata_buffer = grid_buffer.gen_metadata(device.clone());
 
-    let grid_data_buffer =
-        CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), data.drain(..)).unwrap();
+    let node_metadata_buffer = node_buffer.gen_metadata(device.clone());
+    let node_data_buffer = node_buffer.gen_data(device.clone());
+    let node_freestack_buffer = node_buffer.gen_freestack(device.clone());
 
-    let grid_metadata_buffer = CpuAccessibleBuffer::from_data(
-        device.clone(),
-        BufferUsage::uniform_buffer(),
-        shader::gridupdategrid::ty::Constants {
-            xsize: sim_x_size,
-            ysize: sim_y_size,
-            zsize: sim_z_size,
-        },
-    )
-    .unwrap();
-
+    // Load shaders
     let gridupdategrid = shader::gridupdategrid::Shader::load(device.clone()).unwrap();
+    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
+    let gridupdatenode = shader::gridupdatenode::Shader::load(device.clone()).unwrap();
+    let nodeupdatenode = shader::nodeupdatenode::Shader::load(device.clone()).unwrap();
 
+    // Create pipelines for shaders
     let gridupdategrid_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &gridupdategrid.main_entry_point(), &()).unwrap(),
     );
 
+    let nodeupdategrid_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
+    );
+
+    let gridupdatenode_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &gridupdatenode.main_entry_point(), &()).unwrap(),
+    );
+
+    let nodeupdatenode_pipeline = Arc::new(
+        ComputePipeline::new(device.clone(), &nodeupdatenode.main_entry_point(), &()).unwrap(),
+    );
+
+    // Create descriptor sets where the buffers can be placed
     let gridupdategrid_set = Arc::new(
         PersistentDescriptorSet::start(gridupdategrid_pipeline.clone(), 0)
             .add_buffer(grid_metadata_buffer.clone())
@@ -300,6 +319,51 @@ fn main() {
             .unwrap(),
     );
 
+    let nodeupdategrid_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let gridupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    let nodeupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdatenode_pipeline.clone(), 0)
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            .add_buffer(node_freestack_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+
+    // Create command buffers that describe how the shader is to be exected
     let gridupdategrid_command_buffer =
         AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
             .unwrap()
@@ -313,37 +377,84 @@ fn main() {
             .build()
             .unwrap();
 
-    let nodeupdategrid = shader::nodeupdategrid::Shader::load(device.clone()).unwrap();
-
-    let nodeupdategrid_pipeline = Arc::new(
-        ComputePipeline::new(device.clone(), &nodeupdategrid.main_entry_point(), &()).unwrap(),
-    );
-
-    let nodeupdategrid_set = Arc::new(
-        PersistentDescriptorSet::start(nodeupdategrid_pipeline.clone(), 0)
-            .add_buffer(grid_metadata_buffer.clone())
+    let nodeupdategrid_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
             .unwrap()
-            .add_buffer(grid_data_buffer.clone())
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                nodeupdategrid_pipeline.clone(),
+                nodeupdategrid_set.clone(),
+                (),
+            )
             .unwrap()
             .build()
-            .unwrap(),
-    );
+            .unwrap();
 
+    let gridupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                gridupdatenode_pipeline.clone(),
+                gridupdatenode_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let nodeupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_buffer.size(), 1, 1],
+                nodeupdatenode_pipeline.clone(),
+                nodeupdatenode_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    // We execute each shader in order, making sure to flush all changes before next
     let compute_future = sync::now(device.clone())
         .then_execute(queue.clone(), gridupdategrid_command_buffer)
         .unwrap()
         .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), nodeupdategrid_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), gridupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), nodeupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
         .unwrap();
 
+    // Waits for all computation to finish
     compute_future.wait(None).unwrap();
 
-    return;
+    {
+        let vec = node_data_buffer.read().unwrap();
+        let u32vec: Vec<u32> = vec.iter().map(|n| n.age).collect();
+        dbg!(u32vec);
+    }
+
+    */
 
     let mut recreate_swapchain = false;
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
+    let start = Instant::now();
+
     loop {
+        // Add delay
+        thread::sleep(Duration::from_millis(40));
         //Graphics
 
         previous_frame_end.cleanup_finished();
@@ -405,6 +516,7 @@ fn main() {
                     (),
                     shader::vert::ty::PushConstantData {
                         mvp: camera.mvp().into(),
+                        //mvp: getMvp(start, images[0].dimensions()).into(),
                     },
                 )
                 .unwrap()
@@ -471,6 +583,30 @@ fn main() {
             return;
         }
     }
+}
+
+fn get_mvp(rotation_start: Instant, dimensions: [u32; 2]) -> Matrix4<f32> {
+    let elapsed = rotation_start.elapsed();
+    let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_00.0;
+    let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
+
+    // note: this teapot was meant for OpenGL where the origin is at the lower left
+    //       instead the origin is at the upper left in Vulkan, so we reverse the Y axis
+    let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
+    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
+    let view = Matrix4::look_at(
+        Point3::new(0.3, 0.3, 1.0),
+        Point3::new(0.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 0.0),
+    );
+
+    //let scale = Matrix4::from_scale(1.0);
+
+    let proj = proj;
+    let view = view; //* scale;
+    let world = Matrix4::from(rotation);
+
+    proj * view * world
 }
 
 #[derive(Debug, Clone, Copy)]

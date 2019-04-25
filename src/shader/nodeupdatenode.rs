@@ -1,7 +1,8 @@
 vulkano_shaders::shader! {
     ty: "compute",
-    src: "
-#version 450
+    src:
+"#version 450
+
 /* BEGIN COMMON HEADER */
 
 #define NODE_STATUS_GARBAGE 0
@@ -48,19 +49,39 @@ struct GridCell {
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) uniform GridMetadata {
+
+layout(binding = 0) uniform NodeMetadata {
+    uint freePtr; // Index of free stack
+    uint nodeDataCapacity; // Number of nodes that can fit within the buffer
+} nodeMetadata;
+
+layout(binding = 1) buffer NodeData {
+  Node nodes[];
+} nodeData;
+
+layout(binding = 2) buffer NodeFreeStack {
+    uint freeStack[];
+} nodeFreeStack;
+
+layout(binding = 3) uniform GridMetadata {
   uint xsize;
   uint ysize;
   uint zsize;
 } gridMetadata;
 
-layout(binding = 1) buffer GridData{
+layout(binding = 4) buffer GridData {
   GridCell gridCell[];
 } gridData;
 
+
 void main() {
-  uint id = gl_GlobalInvocationID.x;
-  gridData.gridCell[id].temperature = 5;
+    uint nid = gl_GlobalInvocationID.x;
+    // Basic checks
+    if(nid < nodeData.nodes.length() 
+        && nodeData.nodes[nid].status != NODE_STATUS_GARBAGE) {
+        //increase age
+        atomicAdd(nodeData.nodes[nid].age, 1);
+    }
 }
 "
 }
