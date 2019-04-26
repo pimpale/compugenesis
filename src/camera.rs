@@ -18,6 +18,8 @@ pub enum CameraRotationDir {
     Downward,
     Left,
     Right,
+    Clockwise,
+    Counterclockwise,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -97,6 +99,8 @@ impl Camera {
             CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
             CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.01))),
             CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.01))),
+            CameraRotationDir::Clockwise => self.rotate(Matrix4::from_angle_z(Rad(0.01))),
+            CameraRotationDir::Counterclockwise => self.rotate(Matrix4::from_angle_z(Rad(-0.01))),
         }
     }
 
