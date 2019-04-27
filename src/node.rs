@@ -149,6 +149,7 @@ impl NodeBuffer {
         let end_loc =
             source_point + total_rotation.transform_vector(Vector3::unit_y() * node.length);
         if node.visible == 1 {
+            // push nodes that are related
             vertex_list.push(Vertex {
                 loc: to3(source_point),
                 color: [0.0, 1.0, 0.0],

@@ -213,7 +213,7 @@ fn main() {
         scissors: None,
     };
 
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50);
+    let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
     let mut framebuffers = window_size_dependent_setup(
         &images,
         render_pass.clone(),
@@ -495,7 +495,8 @@ fn main() {
                 Err(err) => panic!("{:?}", err),
             };
 
-        let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
+        // Sky blue
+        let clear_values = vec![[0.53, 0.81, 0.92, 1.0].into()];
 
         let command_buffer =
             AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
