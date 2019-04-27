@@ -117,10 +117,6 @@ impl Camera {
 
     fn genview(&mut self) -> () {
         // Look at the place in front of us
-        //self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
-        //
-        dbg!(self.loc + self.rotate_by_camera(Vector3::unit_z()));
-        //dbg!(self.loc + self.front);
         self.view = Matrix4::look_at(
             self.loc,
             self.loc + self.rotate_by_camera(Vector3::unit_z()),

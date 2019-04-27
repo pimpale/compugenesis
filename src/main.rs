@@ -33,6 +33,7 @@ use vulkano::sync::GpuFuture;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 use vulkano::sync::FlushError;
 
 use vulkano_win::VkSurfaceBuild;
@@ -63,37 +64,37 @@ use grid::*;
 use gui::*;
 use node::*;
 
-fn create_instance() -> Arc<Instance> {
+fn create_instance() -> (Arc<Instance>, DebugCallback) {
     let instance = {
         let mut extensions = vulkano_win::required_extensions();
         extensions.ext_debug_report = true;
         Instance::new(
             None,
-            &vulkano_win::required_extensions(),
+            &extensions,
             vec!["VK_LAYER_LUNARG_standard_validation"],
         )
         .unwrap()
     };
 
-    let _debug_callback = DebugCallback::new(
+    let debug_callback = DebugCallback::new(
         &instance,
         MessageTypes {
             error: true,
             warning: true,
-            performance_warning: true,
-            information: true,
-            debug: true,
+            performance_warning: false,
+            information: false,
+            debug: false,
         },
         |msg| {
             println!("validation layer: {:?}", msg.description);
         },
     )
-    .ok();
-    instance
+    .unwrap();
+    return (instance, debug_callback);
 }
 
 fn main() {
-    let instance = create_instance();
+    let (instance, _debug_callback) = create_instance();
     //Choose the first available Device
     let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
 
@@ -446,8 +447,8 @@ fn main() {
 
     loop {
         // Add delay
-        thread::sleep(Duration::from_millis(40));
-        //Graphics
+        // thread::sleep(Duration::from_millis(40));
+        // Graphics
 
         previous_frame_end.cleanup_finished();
 
