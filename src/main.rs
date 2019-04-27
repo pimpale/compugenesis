@@ -132,12 +132,10 @@ fn main() {
     .unwrap();
 
     let settings_packet = Arc::new(RwLock::new(gui::SettingsPacket {
-        sunlight: 1.0,
-        gravity: 9.8,
-        moisture: 1.0,
-        nitrogen: 1.0,
-        potassium: 1.0,
-        phosphorus: 1.0,
+        paused: true,
+        request_stop: false,
+        requested_fps: None,
+        simulation_duration: None, //In cycles
     }));
 
     gtk_setup(settings_packet.clone());

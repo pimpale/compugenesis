@@ -1,18 +1,18 @@
-use gio::prelude::*;
-use gio::ApplicationFlags;
-use gtk::prelude::*;
-
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use gio::prelude::*;
+use gio::ApplicationFlags;
+
+use gtk::prelude::*;
+use gtk::MenuItemExt;
+
 #[derive(Debug, Clone, Copy)]
 pub struct SettingsPacket {
-    pub sunlight: f64,
-    pub gravity: f64,
-    pub moisture: f64,
-    pub nitrogen: f64,
-    pub potassium: f64,
-    pub phosphorus: f64,
+    pub paused: bool,
+    pub request_stop: bool,
+    pub requested_fps: Option<u32>,
+    pub simulation_duration: Option<u32>, //In cycles
 }
 
 pub fn gtk_setup(settings_packet: Arc<RwLock<SettingsPacket>>) -> () {
@@ -25,66 +25,80 @@ pub fn gtk_setup(settings_packet: Arc<RwLock<SettingsPacket>>) -> () {
         application.connect_activate(move |app| {
             let window = gtk::ApplicationWindow::new(app);
 
-            window.set_title("GUI");
+            window.set_title("CompuGenesis");
             window.set_border_width(10);
             window.set_position(gtk::WindowPosition::Center);
             window.set_default_size(350, 350);
 
-            let sunlight_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-            let gravity_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 20.0, 0.1);
-            let moisture_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+            simulation_screen(window.clone(), settings_packet.clone());
 
-            sunlight_scale.set_size_request(200, 10);
-            gravity_scale.set_size_request(200, 10);
-            moisture_scale.set_size_request(200, 10);
-
-            let sunlight_cloned_settings_packet = settings_packet.clone();
-            sunlight_scale.connect_value_changed(move |sc| {
-                let mut w = sunlight_cloned_settings_packet.write().unwrap();
-                w.sunlight = sc.get_value();
-            });
-
-            let gravity_cloned_settings_packet = settings_packet.clone();
-            gravity_scale.connect_value_changed(move |sc| {
-                let mut w = gravity_cloned_settings_packet.write().unwrap();
-                w.gravity = sc.get_value();
-            });
-
-            let moisture_cloned_settings_packet = settings_packet.clone();
-            moisture_scale.connect_value_changed(move |sc| {
-                let mut w = moisture_cloned_settings_packet.write().unwrap();
-                w.moisture = sc.get_value();
-            });
-
-            let sunlight_label = gtk::Label::new("Sunlight");
-            let gravity_label = gtk::Label::new("Gravity");
-            let moisture_label = gtk::Label::new("Moisture");
-
-            let sunlight = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-            let gravity = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-            let moisture = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-
-            sunlight.add(&sunlight_label);
-            sunlight.add(&sunlight_scale);
-
-            gravity.add(&gravity_label);
-            gravity.add(&gravity_scale);
-
-            moisture.add(&moisture_label);
-            moisture.add(&moisture_scale);
-
-            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 1);
-
-            vbox.add(&sunlight);
-            vbox.add(&gravity);
-            vbox.add(&moisture);
-            window.add(&vbox);
-            window.show_all();
+            window.set_default_size(350, 350);
         });
 
         application.run(&[] as &[&str]);
     });
+}
+
+fn welcome_screen(
+    window: gtk::ApplicationWindow,
+    settings_packet: Arc<RwLock<SettingsPacket>>,
+) -> () {
+
+}
+
+fn simulation_screen(
+    window: gtk::ApplicationWindow,
+    settings_packet: Arc<RwLock<SettingsPacket>>,
+) -> () {
+    let menu_bar = gtk::MenuBar::new();
+    let file_menu_item = gtk::MenuItem::new_with_label("File");
+    let file_menu = gtk::Menu::new();
+
+    let view_menu_item = gtk::MenuItem::new_with_label("View");
+    let settings_menu_item = gtk::MenuItem::new_with_label("Settings");
+    let help_menu_item = gtk::MenuItem::new_with_label("Help");
+
+    let import_menu_item = gtk::MenuItem::new_with_label("Import simulation");
+    let export_menu_item = gtk::MenuItem::new_with_label("Export simulation");
+    let quit_menu_item = gtk::MenuItem::new_with_label("Quit");
+
+    file_menu_item.set_submenu(&file_menu);
+    file_menu.append(&import_menu_item);
+    file_menu.append(&export_menu_item);
+    file_menu.append(&quit_menu_item);
+
+    menu_bar.append(&file_menu_item);
+    menu_bar.append(&view_menu_item);
+    menu_bar.append(&settings_menu_item);
+    menu_bar.append(&help_menu_item);
+
+    let fps_scale = gtk::Scale::new_with_range(gtk::Orientation::Horizontal, -1.0, 55.0, 2.0);
+
+    fps_scale.set_size_request(200, 10);
+
+    let fps_cloned_settings_packet = settings_packet.clone();
+    fps_scale.connect_value_changed(move |sc| {
+        let mut w = fps_cloned_settings_packet.write().unwrap();
+        w.requested_fps = if sc.get_value() < 0.0 {
+            None
+        } else {
+            Some(sc.get_value() as u32)
+        };
+    });
+
+    let duration_cloned_settings_packet = settings_packet.clone();
+
+    let fps_label = gtk::Label::new("Compute cycles per second");
+
+    let fps = gtk::Box::new(gtk::Orientation::Vertical, 1);
+
+    fps.add(&fps_label);
+    fps.add(&fps_scale);
+
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    vbox.add(&menu_bar);
+    vbox.add(&fps);
+
+    window.add(&vbox);
+    window.show_all();
 }
