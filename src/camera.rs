@@ -86,8 +86,8 @@ impl Camera {
         match dir {
             CameraMovementDir::Forward => self.translate_rot(Vector3::unit_z() * scale),
             CameraMovementDir::Backward => self.translate_rot(-Vector3::unit_z() * scale),
-            CameraMovementDir::Right => self.translate_rot(Vector3::unit_x() * scale),
-            CameraMovementDir::Left => self.translate_rot(-Vector3::unit_x() * scale),
+            CameraMovementDir::Right => self.translate_rot(-Vector3::unit_x() * scale),
+            CameraMovementDir::Left => self.translate_rot(Vector3::unit_x() * scale),
             CameraMovementDir::Upward => self.translate_rot(Vector3::unit_y() * scale),
             CameraMovementDir::Downward => self.translate_rot(-Vector3::unit_y() * scale),
         }
@@ -95,12 +95,12 @@ impl Camera {
 
     pub fn dir_rotate(&mut self, dir: CameraRotationDir) -> () {
         match dir {
-            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(-0.01))),
-            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
-            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.01))),
-            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.01))),
-            CameraRotationDir::Clockwise => self.rotate(Matrix4::from_angle_z(Rad(0.01))),
-            CameraRotationDir::Counterclockwise => self.rotate(Matrix4::from_angle_z(Rad(-0.01))),
+            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(-0.05))),
+            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(0.05))),
+            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.05))),
+            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.05))),
+            CameraRotationDir::Clockwise => self.rotate(Matrix4::from_angle_z(Rad(0.05))),
+            CameraRotationDir::Counterclockwise => self.rotate(Matrix4::from_angle_z(Rad(-0.05))),
         }
     }
 

@@ -16,7 +16,9 @@ use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, DeviceExtensions};
+use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
+use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::SwapchainImage;
 use vulkano::instance::debug::{DebugCallback, MessageTypes};
 use vulkano::instance::{Instance, PhysicalDevice};
@@ -24,6 +26,7 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
+
 use vulkano::swapchain::{
     AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
@@ -177,19 +180,24 @@ fn main() {
     let fs = shader::frag::Shader::load(device.clone()).unwrap();
 
     let render_pass = Arc::new(
-        single_pass_renderpass!(
-            device.clone(),
+        vulkano::single_pass_renderpass!(device.clone(),
             attachments: {
                 color: {
                     load: Clear,
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
+                },
+                depth: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16Unorm,
+                    samples: 1,
                 }
             },
             pass: {
                 color: [color],
-                depth_stencil: {}
+                depth_stencil: {depth}
             }
         )
         .unwrap(),
@@ -199,9 +207,10 @@ fn main() {
         GraphicsPipeline::start()
             .vertex_input_single_buffer()
             .vertex_shader(vs.main_entry_point(), ())
-            .line_list()
+            .triangle_list()
             .viewports_dynamic_scissors_irrelevant(1)
             .fragment_shader(fs.main_entry_point(), ())
+            .depth_stencil_simple_depth()
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
             .build(device.clone())
             .unwrap(),
@@ -215,6 +224,7 @@ fn main() {
 
     let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
     let mut framebuffers = window_size_dependent_setup(
+        device.clone(),
         &images,
         render_pass.clone(),
         &mut dynamic_state,
@@ -476,6 +486,7 @@ fn main() {
 
             swapchain = new_swapchain;
             framebuffers = window_size_dependent_setup(
+                device.clone(),
                 &new_images,
                 render_pass.clone(),
                 &mut dynamic_state,
@@ -495,13 +506,15 @@ fn main() {
                 Err(err) => panic!("{:?}", err),
             };
 
-        // Sky blue
-        let clear_values = vec![[0.53, 0.81, 0.92, 1.0].into()];
-
         let command_buffer =
             AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
                 .unwrap()
-                .begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
+                .begin_render_pass(
+                    framebuffers[image_num].clone(),
+                    false,
+                    // Sky blue
+                    vec![[0.53, 0.81, 0.92, 1.0].into(), 1f32.into()],
+                )
                 .unwrap()
                 .draw(
                     graphics_pipeline.clone(),
@@ -510,7 +523,6 @@ fn main() {
                     (),
                     shader::vert::ty::PushConstantData {
                         mvp: camera.mvp().into(),
-                        //mvp: getMvp(start, images[0].dimensions()).into(),
                     },
                 )
                 .unwrap()
@@ -584,6 +596,7 @@ fn main() {
 }
 
 fn window_size_dependent_setup(
+    device: Arc<Device>,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<RenderPassAbstract + Send + Sync>,
     dynamic_state: &mut DynamicState,
@@ -599,12 +612,17 @@ fn window_size_dependent_setup(
     camera.setscreen(dimensions[0], dimensions[1]);
     dynamic_state.viewports = Some(vec![viewport]);
 
+    let depth_buffer =
+        AttachmentImage::transient(device.clone(), dimensions, Format::D16Unorm).unwrap();
+
     images
         .iter()
         .map(|image| {
             Arc::new(
                 Framebuffer::start(render_pass.clone())
                     .add(image.clone())
+                    .unwrap()
+                    .add(depth_buffer.clone())
                     .unwrap()
                     .build()
                     .unwrap(),

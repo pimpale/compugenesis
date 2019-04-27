@@ -2,7 +2,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
-use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
+use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::archetype::INVALID_ARCHETYPE_INDEX;
 use super::shader::nodeupdategrid::ty::Node;
@@ -25,6 +25,120 @@ pub struct NodeBuffer {
     free_stack: Vec<u32>,
     free_ptr: u32,
     max_size: u32,
+}
+
+fn perpendicular_vector(vec: Vector3<f32>) -> Vector3<f32> {
+    // The cross product with itself will be zero, so we have 2 options
+    if vec == Vector3::unit_x() {
+        vec.cross(Vector3::unit_y()).normalize()
+    } else {
+        vec.cross(Vector3::unit_x()).normalize()
+    }
+}
+
+fn cylgen(
+    source_loc: Vector3<f32>,
+    end_loc: Vector3<f32>,
+    radius: f32,
+    color1: [f32; 3],
+    color2: [f32; 3],
+) -> Vec<Vertex> {
+    let vec = end_loc - source_loc;
+    let mut hexvec = perpendicular_vector(vec) * radius;
+    let mut face1: Vec<Vector3<f32>> = Vec::new();
+    let mut face2: Vec<Vector3<f32>> = Vec::new();
+    for i in 0..6 {
+        face1.push(hexvec + source_loc);
+        face2.push(hexvec + end_loc);
+        hexvec =
+            (Matrix4::from_axis_angle(vec.normalize(), Deg(60.0)) * hexvec.extend(1.0)).truncate();
+    }
+
+    let mut vertex_list: Vec<Vertex> = Vec::with_capacity(18);
+    for i in 0..6 {
+        vertex_list.push(Vertex {
+            loc: face1[i].into(),
+            color: color1,
+        });
+        //push next in line
+        vertex_list.push(Vertex {
+            loc: face1[(i + 1) % 6].into(),
+            color: color1,
+        });
+        //push one from top
+        vertex_list.push(Vertex {
+            loc: face2[i].into(),
+            color: color2,
+        });
+    }
+    for i in 0..6 {
+        vertex_list.push(Vertex {
+            loc: face2[i].into(),
+            color: color2,
+        });
+        //push next in line
+        vertex_list.push(Vertex {
+            loc: face2[(i + 1) % 6].into(),
+            color: color2,
+        });
+        //push one from top
+        vertex_list.push(Vertex {
+            loc: face1[(i + 1) % 6].into(),
+            color: color1,
+        });
+    }
+    vertex_list
+}
+
+fn leafgen(
+    source_loc: Vector3<f32>,
+    end_loc: Vector3<f32>,
+    up: Vector3<f32>,
+    width: f32,
+    color1: [f32; 3],
+    color2: [f32; 3],
+) -> Vec<Vertex> {
+    let mut vertex_list: Vec<Vertex> = Vec::new();
+
+    // The vector between the source and end
+    let vec = end_loc - source_loc;
+    // This is the horizontal part of the leaf
+    let perpvec = vec.cross(up).normalize() * width;
+
+    let point1 = source_loc - perpvec;
+    let point2 = source_loc + perpvec;
+    let point3 = end_loc - perpvec;
+    let point4 = end_loc + perpvec;
+
+    //push first triangle
+    vertex_list.push(Vertex {
+        loc: point1.into(),
+        color: color1,
+    });
+    vertex_list.push(Vertex {
+        loc: point2.into(),
+        color: color1,
+    });
+    vertex_list.push(Vertex {
+        loc: point3.into(),
+        color: color2,
+    });
+
+    //push second triangle
+    vertex_list.push(Vertex {
+        loc: point3.into(),
+        color: color2,
+    });
+    vertex_list.push(Vertex {
+        loc: point4.into(),
+        color: color2,
+    });
+    vertex_list.push(Vertex {
+        loc: point2.into(),
+        color: color1,
+    });
+
+    vertex_list
 }
 
 impl NodeBuffer {
@@ -137,7 +251,7 @@ impl NodeBuffer {
     /// Internal recursive algorithm that traverses tree structure
     fn gen_node_vertex(
         &self,
-        source_point: Vector3<f32>,
+        source_loc: Vector3<f32>,
         parent_rotation: Matrix4<f32>,
         node_index: u32,
     ) -> Vec<Vertex> {
@@ -146,19 +260,27 @@ impl NodeBuffer {
         // The rotation of this node
         let total_rotation = parent_rotation * tomat(node.transformation);
         // The endpoint in space where this node ends
-        let end_loc =
-            source_point + total_rotation.transform_vector(Vector3::unit_y() * node.length);
+        let end_loc = source_loc + total_rotation.transform_vector(Vector3::unit_y() * node.length);
         if node.visible == 1 {
-            // push nodes that are related
-            vertex_list.push(Vertex {
-                loc: to3(source_point),
-                color: [0.0, 1.0, 0.0],
-            });
-            vertex_list.push(Vertex {
-                loc: to3(end_loc),
-                color: [0.0, 0.0, 0.0],
-            });
-        };
+            if node.archetypeId == 2 {
+                vertex_list.append(&mut leafgen(
+                    source_loc,
+                    end_loc,
+                    Vector3::unit_y(),
+                    node.length / 2.0,
+                    [0.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                ));
+            } else {
+                vertex_list.append(&mut cylgen(
+                    source_loc,
+                    end_loc,
+                    node.length / 6.0,
+                    [0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                ));
+            }
+        }
         // Get child vertex_list, and add it to our own
         if node.leftChildIndex != INVALID_INDEX {
             vertex_list.append(&mut self.gen_node_vertex(
@@ -238,7 +360,7 @@ impl NodeBuffer {
                 let r = rand::random::<f32>();
                 self.node_list[i as usize].length = node.length * (0.1 - node.length) + node.length;
                 self.node_list[i as usize].age += 1;
-                if node.length > 0.007 && node.age < 9000 && r > 0.995 {
+                if node.length > 0.007 && node.age < 9000 && r > 0.9995 {
                     self.divide(0.5, i);
                     let ni = self.alloc();
                     self.node_list[ni as usize] = {
@@ -246,8 +368,11 @@ impl NodeBuffer {
                         nnode.status = STATUS_ALIVE;
                         nnode.visible = 1;
                         nnode.length = 0.001;
+                        nnode.archetypeId = 2;
                         nnode.transformation =
-                            Matrix4::from_angle_z(Rad(rand::random::<f32>() - 0.5)).into();
+                            (Matrix4::from_angle_z(Rad(rand::random::<f32>() - 0.5))
+                                * Matrix4::from_angle_x(Rad(rand::random::<f32>() - 0.5)))
+                            .into();
                         nnode
                     };
                     self.set_right_child(i, ni);
