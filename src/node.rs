@@ -371,8 +371,9 @@ impl NodeBuffer {
                         if rand::random::<f32>() > 0.99 {
                             let leftchildindex = self.alloc();
                             self.node_list[leftchildindex as usize] = node.clone();
+                            self.node_list[leftchildindex as usize].transformation =
+                                Matrix4::one().into();
                             node.archetypeId = STEM_ARCHETYPE_INDEX;
-                            node.transformation = Matrix4::one().into();
                             node.length = 0.001;
                             self.node_list[ni as usize] = node;
                             self.set_left_child(ni, leftchildindex);

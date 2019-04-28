@@ -250,7 +250,7 @@ fn main() {
         n1.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
         n1.visible = 1;
         n1.absolutePositionCache = [0.0, 0.0, 0.0];
-        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI / 2.0)).into();
+        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
         n1.length = 0.05;
         n1.radius = 0.01;
         n1.volume = 0.1;
