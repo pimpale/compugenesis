@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
-use super::archetype::INVALID_ARCHETYPE_INDEX;
+use super::archetype::*;
 use super::shader::nodeupdategrid::ty::Node;
 use super::shader::nodeupdategrid::ty::NodeMetadata;
 use super::vertex::Vertex;
@@ -90,6 +90,11 @@ fn cylgen(
     vertex_list
 }
 
+/// Returns the delta logistic growth
+fn logisticDelta(current: f32, max: f32) -> f32 {
+    current * (max - current)
+}
+
 fn leafgen(
     source_loc: Vector3<f32>,
     end_loc: Vector3<f32>,
@@ -103,7 +108,7 @@ fn leafgen(
     // The vector between the source and end
     let vec = end_loc - source_loc;
     // This is the horizontal part of the leaf
-    let perpvec = vec.cross(up).normalize() * width;
+    let perpvec = vec.cross(up).normalize() * (width / 2.0);
 
     let point1 = source_loc - perpvec;
     let point2 = source_loc + perpvec;
@@ -262,12 +267,12 @@ impl NodeBuffer {
         // The endpoint in space where this node ends
         let end_loc = source_loc + total_rotation.transform_vector(Vector3::unit_y() * node.length);
         if node.visible == 1 {
-            if node.archetypeId == 2 {
+            if node.archetypeId == LEAF_ARCHETYPE_INDEX {
                 vertex_list.append(&mut leafgen(
                     source_loc,
                     end_loc,
                     Vector3::unit_y(),
-                    node.length / 2.0,
+                    node.radius,
                     [0.0, 1.0, 0.0],
                     [1.0, 1.0, 0.0],
                 ));
@@ -275,7 +280,7 @@ impl NodeBuffer {
                 vertex_list.append(&mut cylgen(
                     source_loc,
                     end_loc,
-                    node.length / 6.0,
+                    node.radius,
                     [0.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0],
                 ));
@@ -321,13 +326,14 @@ impl NodeBuffer {
     /// node as a parent. The children are transferred to the new node. All properties of the old
     /// node are maintained, except for children. The left child is the new node, and the right one
     /// is left empty
+    /// returns the index of the newly created node
     pub fn divide(&mut self, percentbreak: f32, node_index: u32) -> u32 {
         // Allocate a spot for the new node
         let new_node_index = self.alloc();
 
-        //New node shares all properties with old one
+        // New node shares all properties with old one
         self.node_list[new_node_index as usize] = self.node_list[node_index as usize].clone();
-        //Set lengths so they add up to same amount TODO ensure percentbreak is less than one
+        // Set lengths so they add up to same amount TODO ensure percentbreak is less than one
         let origlength = self.node_list[node_index as usize].length;
         self.node_list[node_index as usize].length = percentbreak * origlength;
         self.node_list[new_node_index as usize].length = (1.0 - percentbreak) * origlength;
@@ -354,28 +360,51 @@ impl NodeBuffer {
 
     /// Does a nodeupdatenode on all nodes within the buffer that are not garbage
     pub fn update_all(&mut self) {
-        for i in 0..self.max_size {
-            let node = self.node_list[i as usize];
+        for ni in 0..self.max_size {
+            let mut node = self.node_list[ni as usize];
             if node.status != STATUS_GARBAGE {
-                let r = rand::random::<f32>();
-                self.node_list[i as usize].length = node.length * (0.1 - node.length) + node.length;
-                self.node_list[i as usize].age += 1;
-                if node.length > 0.007 && node.age < 9000 && r > 0.9995 {
-                    self.divide(0.5, i);
-                    let ni = self.alloc();
-                    self.node_list[ni as usize] = {
-                        let mut nnode = Node::new();
-                        nnode.status = STATUS_ALIVE;
-                        nnode.visible = 1;
-                        nnode.length = 0.001;
-                        nnode.archetypeId = 2;
-                        nnode.transformation =
-                            (Matrix4::from_angle_z(Rad(rand::random::<f32>() - 0.5))
-                                * Matrix4::from_angle_x(Rad(rand::random::<f32>() - 0.5)))
-                            .into();
-                        nnode
-                    };
-                    self.set_right_child(i, ni);
+                self.node_list[ni as usize].age += 1;
+
+                match node.archetypeId {
+                    INVALID_ARCHETYPE_INDEX => (),
+                    GROWING_BUD_ARCHETYPE_INDEX => {
+                        if rand::random::<f32>() > 0.99 {
+                            let leftchildindex = self.alloc();
+                            self.node_list[leftchildindex as usize] = node.clone();
+                            node.archetypeId = STEM_ARCHETYPE_INDEX;
+                            node.transformation = Matrix4::one().into();
+                            node.length = 0.001;
+                            self.node_list[ni as usize] = node;
+                            self.set_left_child(ni, leftchildindex);
+                            if rand::random::<f32>() > 0.3 {
+                                let rightchildindex = self.alloc();
+                                // Create new node for leaf
+                                let mut leafnode = Node::new();
+                                leafnode.archetypeId = LEAF_ARCHETYPE_INDEX;
+                                leafnode.visible = 1;
+                                leafnode.status = STATUS_ALIVE;
+                                leafnode.length = 0.001;
+                                leafnode.radius = 0.001;
+                                leafnode.transformation = (Matrix4::from_angle_z(Rad(
+                                    (rand::random::<f32>() - 0.5) * 2.0,
+                                )) * Matrix4::from_angle_x(Rad(
+                                    (rand::random::<f32>() - 0.5) * 2.0,
+                                )))
+                                .into();
+                                self.node_list[rightchildindex as usize] = leafnode;
+                                self.set_right_child(ni, rightchildindex);
+                            }
+                        }
+                    }
+                    STEM_ARCHETYPE_INDEX => {
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.1);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.02);
+                    }
+                    LEAF_ARCHETYPE_INDEX => {
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.3);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.05);
+                    }
+                    _ => println!("oof"),
                 }
             }
         }
@@ -419,7 +448,7 @@ impl Node {
             status: STATUS_GARBAGE,
             visible: 0,
             length: 0.0,
-            area: 0.0,
+            radius: 0.0, // Also can be width
             volume: 0.0,
             absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
