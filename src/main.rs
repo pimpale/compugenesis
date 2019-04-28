@@ -16,7 +16,9 @@ use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, DeviceExtensions};
+use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
+use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::SwapchainImage;
 use vulkano::instance::debug::{DebugCallback, MessageTypes};
 use vulkano::instance::{Instance, PhysicalDevice};
@@ -24,6 +26,7 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
+
 use vulkano::swapchain::{
     AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
@@ -34,11 +37,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
-
-use gio::prelude::*;
-use gio::ApplicationFlags;
-use gtk::prelude::*;
-
 use vulkano::sync::FlushError;
 
 use vulkano_win::VkSurfaceBuild;
@@ -59,45 +57,48 @@ mod util;
 mod archetype;
 mod camera;
 mod grid;
+mod gui;
 mod node;
 mod shader;
 mod vertex;
 
+use archetype::*;
 use camera::*;
 use grid::*;
+use gui::*;
 use node::*;
 
-fn create_instance() -> Arc<Instance> {
+fn create_instance() -> (Arc<Instance>, DebugCallback) {
     let instance = {
         let mut extensions = vulkano_win::required_extensions();
         extensions.ext_debug_report = true;
         Instance::new(
             None,
-            &vulkano_win::required_extensions(),
+            &extensions,
             vec!["VK_LAYER_LUNARG_standard_validation"],
         )
         .unwrap()
     };
 
-    let _debug_callback = DebugCallback::new(
+    let debug_callback = DebugCallback::new(
         &instance,
         MessageTypes {
             error: true,
             warning: true,
-            performance_warning: true,
-            information: true,
-            debug: true,
+            performance_warning: false,
+            information: false,
+            debug: false,
         },
         |msg| {
             println!("validation layer: {:?}", msg.description);
         },
     )
-    .ok();
-    instance
+    .unwrap();
+    return (instance, debug_callback);
 }
 
 fn main() {
-    let instance = create_instance();
+    let (instance, _debug_callback) = create_instance();
     //Choose the first available Device
     let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
 
@@ -135,13 +136,11 @@ fn main() {
     )
     .unwrap();
 
-    let settings_packet = Arc::new(RwLock::new(SettingsPacket {
-        sunlight: 1.0,
-        gravity: 9.8,
-        moisture: 1.0,
-        nitrogen: 1.0,
-        potassium: 1.0,
-        phosphorus: 1.0,
+    let settings_packet = Arc::new(RwLock::new(gui::SettingsPacket {
+        paused: true,
+        request_stop: false,
+        requested_fps: None,
+        simulation_duration: None, //In cycles
     }));
 
     gtk_setup(settings_packet.clone());
@@ -182,19 +181,24 @@ fn main() {
     let fs = shader::frag::Shader::load(device.clone()).unwrap();
 
     let render_pass = Arc::new(
-        single_pass_renderpass!(
-            device.clone(),
+        vulkano::single_pass_renderpass!(device.clone(),
             attachments: {
                 color: {
                     load: Clear,
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
+                },
+                depth: {
+                    load: Clear,
+                    store: DontCare,
+                    format: Format::D16Unorm,
+                    samples: 1,
                 }
             },
             pass: {
                 color: [color],
-                depth_stencil: {}
+                depth_stencil: {depth}
             }
         )
         .unwrap(),
@@ -204,9 +208,10 @@ fn main() {
         GraphicsPipeline::start()
             .vertex_input_single_buffer()
             .vertex_shader(vs.main_entry_point(), ())
-            .line_list()
+            .triangle_list()
             .viewports_dynamic_scissors_irrelevant(1)
             .fragment_shader(fs.main_entry_point(), ())
+            .depth_stencil_simple_depth()
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
             .build(device.clone())
             .unwrap(),
@@ -218,8 +223,9 @@ fn main() {
         scissors: None,
     };
 
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, 1.0), 50, 50);
+    let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
     let mut framebuffers = window_size_dependent_setup(
+        device.clone(),
         &images,
         render_pass.clone(),
         &mut dynamic_state,
@@ -234,18 +240,19 @@ fn main() {
     let sim_z_size: u32 = 10;
 
     // The maximum node capacity of the node buffer
-    let mut node_buffer = NodeBuffer::new(500);
+    let mut node_buffer = NodeBuffer::new(50000);
     {
         let i1 = node_buffer.alloc();
 
         let mut n1 = Node::new();
 
         n1.status = STATUS_ALIVE;
+        n1.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
         n1.visible = 1;
         n1.absolutePositionCache = [0.0, 0.0, 0.0];
         n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
-        n1.length = 0.4;
-        n1.area = 0.1;
+        n1.length = 0.05;
+        n1.radius = 0.01;
         n1.volume = 0.1;
 
         node_buffer.set(i1, n1);
@@ -450,12 +457,10 @@ fn main() {
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
-    let start = Instant::now();
-
     loop {
         // Add delay
-        thread::sleep(Duration::from_millis(40));
-        //Graphics
+        // thread::sleep(Duration::from_millis(40));
+        // Graphics
 
         previous_frame_end.cleanup_finished();
 
@@ -483,6 +488,7 @@ fn main() {
 
             swapchain = new_swapchain;
             framebuffers = window_size_dependent_setup(
+                device.clone(),
                 &new_images,
                 render_pass.clone(),
                 &mut dynamic_state,
@@ -502,12 +508,15 @@ fn main() {
                 Err(err) => panic!("{:?}", err),
             };
 
-        let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
-
         let command_buffer =
             AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
                 .unwrap()
-                .begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
+                .begin_render_pass(
+                    framebuffers[image_num].clone(),
+                    false,
+                    // Sky blue
+                    vec![[0.53, 0.81, 0.92, 1.0].into(), 1f32.into()],
+                )
                 .unwrap()
                 .draw(
                     graphics_pipeline.clone(),
@@ -516,7 +525,6 @@ fn main() {
                     (),
                     shader::vert::ty::PushConstantData {
                         mvp: camera.mvp().into(),
-                        //mvp: getMvp(start, images[0].dimensions()).into(),
                     },
                 )
                 .unwrap()
@@ -564,15 +572,19 @@ fn main() {
                 let kc = input.virtual_keycode;
                 if kc.is_some() {
                     match kc.unwrap() {
-                        VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Upward),
+                        VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Forward),
                         VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
-                        VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Downward),
+                        VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
                         VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
 
                         VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
                         VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
                         VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),
                         VirtualKeyCode::Right => camera.dir_rotate(CameraRotationDir::Right),
+                        VirtualKeyCode::PageUp => camera.dir_rotate(CameraRotationDir::Clockwise),
+                        VirtualKeyCode::PageDown => {
+                            camera.dir_rotate(CameraRotationDir::Counterclockwise)
+                        }
                         _ => (),
                     }
                 }
@@ -585,115 +597,8 @@ fn main() {
     }
 }
 
-fn get_mvp(rotation_start: Instant, dimensions: [u32; 2]) -> Matrix4<f32> {
-    let elapsed = rotation_start.elapsed();
-    let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_00.0;
-    let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
-
-    // note: this teapot was meant for OpenGL where the origin is at the lower left
-    //       instead the origin is at the upper left in Vulkan, so we reverse the Y axis
-    let aspect_ratio = dimensions[0] as f32 / dimensions[1] as f32;
-    let proj = cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
-    let view = Matrix4::look_at(
-        Point3::new(0.3, 0.3, 1.0),
-        Point3::new(0.0, 0.0, 0.0),
-        Vector3::new(0.0, 1.0, 0.0),
-    );
-
-    //let scale = Matrix4::from_scale(1.0);
-
-    let proj = proj;
-    let view = view; //* scale;
-    let world = Matrix4::from(rotation);
-
-    proj * view * world
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SettingsPacket {
-    pub sunlight: f64,
-    pub gravity: f64,
-    pub moisture: f64,
-    pub nitrogen: f64,
-    pub potassium: f64,
-    pub phosphorus: f64,
-}
-
-fn gtk_setup(settings_packet: Arc<RwLock<SettingsPacket>>) -> () {
-    std::thread::spawn(move || {
-        let application = gtk::Application::new(
-            "com.github.gtk-rs.examples.basic",
-            ApplicationFlags::empty(),
-        )
-        .expect("Initialization failed...");
-        application.connect_activate(move |app| {
-            let window = gtk::ApplicationWindow::new(app);
-
-            window.set_title("GUI");
-            window.set_border_width(10);
-            window.set_position(gtk::WindowPosition::Center);
-            window.set_default_size(350, 350);
-
-            let sunlight_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-            let gravity_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 20.0, 0.1);
-            let moisture_scale =
-                gtk::Scale::new_with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-
-            sunlight_scale.set_size_request(200, 10);
-            gravity_scale.set_size_request(200, 10);
-            moisture_scale.set_size_request(200, 10);
-
-            let sunlight_cloned_settings_packet = settings_packet.clone();
-            sunlight_scale.connect_value_changed(move |sc| {
-                let mut w = sunlight_cloned_settings_packet.write().unwrap();
-                w.sunlight = sc.get_value();
-            });
-
-            let gravity_cloned_settings_packet = settings_packet.clone();
-            gravity_scale.connect_value_changed(move |sc| {
-                let mut w = gravity_cloned_settings_packet.write().unwrap();
-                w.gravity = sc.get_value();
-            });
-
-            let moisture_cloned_settings_packet = settings_packet.clone();
-            moisture_scale.connect_value_changed(move |sc| {
-                let mut w = moisture_cloned_settings_packet.write().unwrap();
-                w.moisture = sc.get_value();
-            });
-
-            let sunlight_label = gtk::Label::new("Sunlight");
-            let gravity_label = gtk::Label::new("Gravity");
-            let moisture_label = gtk::Label::new("Moisture");
-
-            let sunlight = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-            let gravity = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-            let moisture = gtk::Box::new(gtk::Orientation::Horizontal, 1);
-
-            sunlight.add(&sunlight_label);
-            sunlight.add(&sunlight_scale);
-
-            gravity.add(&gravity_label);
-            gravity.add(&gravity_scale);
-
-            moisture.add(&moisture_label);
-            moisture.add(&moisture_scale);
-
-            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 1);
-
-            vbox.add(&sunlight);
-            vbox.add(&gravity);
-            vbox.add(&moisture);
-            window.add(&vbox);
-            window.show_all();
-        });
-
-        application.run(&[] as &[&str]);
-    });
-}
-
 fn window_size_dependent_setup(
+    device: Arc<Device>,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<RenderPassAbstract + Send + Sync>,
     dynamic_state: &mut DynamicState,
@@ -709,12 +614,17 @@ fn window_size_dependent_setup(
     camera.setscreen(dimensions[0], dimensions[1]);
     dynamic_state.viewports = Some(vec![viewport]);
 
+    let depth_buffer =
+        AttachmentImage::transient(device.clone(), dimensions, Format::D16Unorm).unwrap();
+
     images
         .iter()
         .map(|image| {
             Arc::new(
                 Framebuffer::start(render_pass.clone())
                     .add(image.clone())
+                    .unwrap()
+                    .add(depth_buffer.clone())
                     .unwrap()
                     .build()
                     .unwrap(),

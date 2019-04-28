@@ -30,7 +30,7 @@ struct Node {
   uint status;
   bool visible; // visibility during vertex generation
   float length; // Length in meters (used for displacement)
-  float area;   // Area in square meters (used for photosynthesis + wind)
+  float radius;   // Radius in square meters (used for photosynthesis + wind)
   float volume; // Volume in cubic meters (used for light calculations)
   vec3 absolutePositionCache; // Cache of absolute position
   mat4 transformation; //Transformation from parent node

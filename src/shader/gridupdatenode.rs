@@ -4,18 +4,20 @@ vulkano_shaders::shader! {
 #version 450
 
 struct Node {
-    uint leftChildIndex;
-    uint rightChildIndex;
-    uint parentIndex;
-    uint age;
-    uint archetypeId;
-    uint status;
-    bool visible;
-    float area;
-    float length;
-    vec4 absolutePositionCache;
-    mat4 transformation;
+  uint leftChildIndex;
+  uint rightChildIndex;
+  uint parentIndex;
+  uint age;
+  uint archetypeId;
+  uint status;
+  bool visible; // visibility during vertex generation
+  float length; // Length in meters (used for displacement)
+  float radius;   // Radius in square meters (used for photosynthesis + wind)
+  float volume; // Volume in cubic meters (used for light calculations)
+  vec3 absolutePositionCache; // Cache of absolute position
+  mat4 transformation; //Transformation from parent node
 };
+
 
 struct GridCell {
     uint typeCode;

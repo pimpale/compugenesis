@@ -18,6 +18,8 @@ pub enum CameraRotationDir {
     Downward,
     Left,
     Right,
+    Clockwise,
+    Counterclockwise,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -62,8 +64,7 @@ impl Camera {
     }
 
     pub fn translate_rot(&mut self, delta: Vector3<f32>) -> () {
-        let newvec = self.rotation * Vector4::new(delta.x, delta.y, delta.z, 1.0);
-        self.translate(Vector3::new(newvec.x, newvec.y, newvec.z));
+        self.translate(self.rotate_by_camera(delta));
     }
 
     pub fn rotate(&mut self, rot: Matrix4<f32>) -> () {
@@ -77,26 +78,30 @@ impl Camera {
 
     pub fn setrot(&mut self, rot: Matrix4<f32>) -> () {
         self.rotation = rot;
+        self.genview();
     }
 
     pub fn dir_move(&mut self, dir: CameraMovementDir) -> () {
-        let scale = 0.1;
+        let scale = 0.01;
         match dir {
             CameraMovementDir::Forward => self.translate_rot(Vector3::unit_z() * scale),
             CameraMovementDir::Backward => self.translate_rot(-Vector3::unit_z() * scale),
-            CameraMovementDir::Right => self.translate_rot(Vector3::unit_x() * scale),
-            CameraMovementDir::Left => self.translate_rot(-Vector3::unit_x() * scale),
+            CameraMovementDir::Right => self.translate_rot(-Vector3::unit_x() * scale),
+            CameraMovementDir::Left => self.translate_rot(Vector3::unit_x() * scale),
             CameraMovementDir::Upward => self.translate_rot(Vector3::unit_y() * scale),
             CameraMovementDir::Downward => self.translate_rot(-Vector3::unit_y() * scale),
         }
     }
 
     pub fn dir_rotate(&mut self, dir: CameraRotationDir) -> () {
+        let scale = 0.05;
         match dir {
-            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(0.01))),
-            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(-0.01))),
-            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(0.01))),
-            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-0.01))),
+            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(-scale))),
+            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(scale))),
+            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(scale))),
+            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-scale))),
+            CameraRotationDir::Clockwise => self.rotate(Matrix4::from_angle_z(Rad(scale))),
+            CameraRotationDir::Counterclockwise => self.rotate(Matrix4::from_angle_z(Rad(-scale))),
         }
     }
 
@@ -106,16 +111,16 @@ impl Camera {
         self.genprojection();
     }
 
+    fn rotate_by_camera(&self, vec: Vector3<f32>) -> Vector3<f32> {
+        let newvec = self.rotation * Vector4::new(vec.x, vec.y, vec.z, 1.0);
+        Vector3::new(newvec.x, newvec.y, newvec.z)
+    }
+
     fn genview(&mut self) -> () {
         // Look at the place in front of us
-        //self.view = Matrix4::look_at(self.loc, self.loc + self.front, self.up);
-        //
-        dbg!(self.loc);
-        //dbg!(self.loc + self.front);
         self.view = Matrix4::look_at(
             self.loc,
-            //self.loc + self.front,
-            Point3::new(0.0, 0.0, 0.0),
+            self.loc + self.rotate_by_camera(Vector3::unit_z()),
             self.worldup,
         );
     }
