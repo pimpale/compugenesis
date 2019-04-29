@@ -47,11 +47,6 @@ use std::sync::RwLock;
 
 use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
 
-use shader::gridupdategrid::ty::GridCell;
-use shader::gridupdategrid::ty::GridMetadata;
-use shader::nodeupdategrid::ty::Node;
-use shader::nodeupdategrid::ty::NodeMetadata;
-
 mod util;
 
 mod archetype;

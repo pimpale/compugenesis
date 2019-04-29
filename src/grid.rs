@@ -4,8 +4,8 @@
 #![allow(non_snake_case)]
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
 
-use super::shader::gridupdategrid::ty::GridCell;
-use super::shader::gridupdategrid::ty::GridMetadata;
+use super::serde::{Deserialize, Serialize};
+use super::shader::gridupdategrid::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -17,7 +17,7 @@ pub const GRIDCELL_TYPE_WATER: u32 = 2;
 pub const GRIDCELL_TYPE_STONE: u32 = 3;
 pub const GRIDCELL_TYPE_SOIL: u32 = 4;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GridBuffer {
     grid_cells: Vec<GridCell>,
     xsize: u32,
@@ -48,11 +48,11 @@ impl GridBuffer {
         self.grid_cells[id] = cell.clone();
     }
 
-    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<GridMetadata>> {
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::GridMetadata>> {
         CpuAccessibleBuffer::from_data(
             device.clone(),
             BufferUsage::uniform_buffer(),
-            GridMetadata {
+            ty::GridMetadata {
                 xsize: self.xsize,
                 ysize: self.ysize,
                 zsize: self.zsize,
@@ -61,14 +61,24 @@ impl GridBuffer {
         .unwrap()
     }
 
-    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[GridCell]>> {
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::GridCell]>> {
         CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
-            self.grid_cells.to_vec().drain(..),
+            self.grid_cells.to_vec().drain(..).map(|g| g.gpu()),
         )
         .unwrap()
     }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GridCell {
+    pub typeCode: u32,
+    pub temperature: u32,
+    pub moisture: u32,
+    pub sunlight: u32,
+    pub gravity: u32,
+    pub plantDensity: u32,
 }
 
 impl GridCell {
@@ -80,6 +90,17 @@ impl GridCell {
             sunlight: 0,
             gravity: 0,
             plantDensity: 0,
+        }
+    }
+
+    pub fn gpu(&self) -> ty::GridCell {
+        ty::GridCell {
+            typeCode: self.typeCode,
+            temperature: self.temperature,
+            moisture: self.moisture,
+            sunlight: self.sunlight,
+            gravity: self.gravity,
+            plantDensity: self.plantDensity,
         }
     }
 }
