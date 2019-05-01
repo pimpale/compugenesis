@@ -48,6 +48,62 @@ impl GridBuffer {
         self.grid_cells[id] = cell.clone();
     }
 
+    fn gen_vertex_cell(&self, x: u32, y: u32, z: u32) -> Vec<Vertex> {
+        let lbu = Vertex {
+            loc: [x as f32, y as f32, z as f32],
+            color: [0.5, 0.9, 0.5],
+        };
+        let rbu = Vertex {
+            loc: [(x + 1) as f32, y as f32, z as f32],
+            color: [0.5, 0.5, 0.9],
+        };
+        let lfu = Vertex {
+            loc: [x as f32, y as f32, (z + 1) as f32],
+            color: [0.9, 0.5, 0.5],
+        };
+        let rfu = Vertex {
+            loc: [(x + 1) as f32, y as f32, (z + 1) as f32],
+            color: [0.5, 0.5, 0.5],
+        };
+        let lbl = Vertex {
+            loc: [x as f32, (y + 1) as f32, z as f32],
+            color: [0.5, 0.5, 0.5],
+        };
+        let rbl = Vertex {
+            loc: [(x + 1) as f32, (y + 1) as f32, z as f32],
+            color: [0.5, 0.5, 0.5],
+        };
+        let lfl = Vertex {
+            loc: [x as f32, (y + 1) as f32, (z + 1) as f32],
+            color: [0.5, 0.5, 0.5],
+        };
+        let rfl = Vertex {
+            loc: [(x + 1) as f32, (y + 1) as f32, (z + 1) as f32],
+            color: [0.5, 0.5, 0.5],
+        };
+
+        vec![
+            lbu, rbu, lfu, lfu, rfu, rbu, //upper square
+            lbl, rbl, lfl, lfl, rfl, rbl, //lower square
+            lfu, rfu, lfl, lfl, rfl, rfu, // front square
+            lbu, rbu, lbl, lbl, rbl, rbu, // back square
+            lbu, lfu, lbl, lbl, lfl, lfu, // left square
+            rbu, rfu, rbl, rbl, rfl, rfu, //  rightsquare
+        ]
+    }
+
+    pub fn gen_vertex(&self) -> Vec<Vertex> {
+        let mut vertex_list: Vec<Vertex> = Vec::new();
+        for x in 0..self.xsize {
+            for y in 0..self.ysize {
+                for z in 0..self.zsize {
+                    vertex_list.append(&mut self.gen_vertex_cell(x, y, z));
+                }
+            }
+        }
+        vertex_list
+    }
+
     pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::GridMetadata>> {
         CpuAccessibleBuffer::from_data(
             device.clone(),

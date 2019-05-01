@@ -91,8 +91,8 @@ fn cylgen(
 }
 
 /// Returns the delta logistic growth
-fn logisticDelta(current: f32, max: f32) -> f32 {
-    current * (max - current)
+fn logisticDelta(current: f32, max: f32, scale: f32) -> f32 {
+    current * (max - current) * scale
 }
 
 fn leafgen(
@@ -374,7 +374,7 @@ impl NodeBuffer {
                 match node.archetypeId {
                     INVALID_ARCHETYPE_INDEX => (),
                     GROWING_BUD_ARCHETYPE_INDEX => {
-                        if rand::random::<f32>() > 0.99 {
+                        if rand::random::<f32>() > 0.999 && node.age < 5000 {
                             let leftchildindex = self.alloc();
                             self.node_list[leftchildindex as usize] = node.clone();
                             self.node_list[leftchildindex as usize].transformation =
@@ -404,12 +404,12 @@ impl NodeBuffer {
                         }
                     }
                     STEM_ARCHETYPE_INDEX => {
-                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.1);
-                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.02);
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.1, 1.0);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.02, 1.0);
                     }
                     LEAF_ARCHETYPE_INDEX => {
-                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.3);
-                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.05);
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.3, 0.1);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.05, 0.5);
                     }
                     _ => println!("oof"),
                 }
@@ -475,6 +475,23 @@ impl Node {
             volume: 0.0,
             absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
+        }
+    }
+
+    pub fn fromgpu(node: nodeupdategrid::ty::Node) -> Node {
+        Node {
+            leftChildIndex: node.leftChildIndex,
+            rightChildIndex: node.rightChildIndex,
+            parentIndex: node.parentIndex,
+            age: node.age,
+            archetypeId: node.archetypeId,
+            status: node.status,
+            visible: node.visible,
+            length: node.length,
+            radius: node.radius,
+            volume: node.volume,
+            absolutePositionCache: node.absolutePositionCache,
+            transformation: node.transformation,
         }
     }
 

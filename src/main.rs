@@ -236,7 +236,7 @@ fn main() {
 
     // The maximum node capacity of the node buffer
     let mut node_buffer = NodeBuffer::new(500);
-    {
+    for i in 0..5 {
         let i1 = node_buffer.alloc();
 
         let mut n1 = Node::new();
@@ -461,7 +461,8 @@ fn main() {
 
         node_buffer.update_all();
         let vertex_buffer = {
-            let vecs = node_buffer.gen_vertex();
+            let mut vecs = node_buffer.gen_vertex();
+            vecs.append(&mut grid_buffer.gen_vertex());
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), vecs.iter().cloned())
                 .unwrap()
         };
