@@ -6,10 +6,23 @@ extern crate gio;
 extern crate gtk;
 extern crate rand;
 extern crate serde;
+extern crate serde_json;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
 
+use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
 #[allow(dead_code)]
 #[allow(unused_imports)]
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
@@ -26,33 +39,14 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
-
 use vulkano::swapchain::{
     AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
 };
 use vulkano::sync;
-use vulkano::sync::GpuFuture;
-
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
-use std::time::Instant;
 use vulkano::sync::FlushError;
-
+use vulkano::sync::GpuFuture;
 use vulkano_win::VkSurfaceBuild;
-
 use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEvent};
-
-use std::sync::RwLock;
-
-use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
-
-use shader::gridupdategrid::ty::GridCell;
-use shader::gridupdategrid::ty::GridMetadata;
-use shader::nodeupdategrid::ty::Node;
-use shader::nodeupdategrid::ty::NodeMetadata;
-
-mod util;
 
 mod archetype;
 mod camera;
@@ -60,6 +54,7 @@ mod grid;
 mod gui;
 mod node;
 mod shader;
+mod util;
 mod vertex;
 
 use archetype::*;
@@ -240,8 +235,8 @@ fn main() {
     let sim_z_size: u32 = 10;
 
     // The maximum node capacity of the node buffer
-    let mut node_buffer = NodeBuffer::new(50000);
-    {
+    let mut node_buffer = NodeBuffer::new(500);
+    for i in 0..5 {
         let i1 = node_buffer.alloc();
 
         let mut n1 = Node::new();
@@ -260,15 +255,16 @@ fn main() {
     let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
     for x in 0..sim_x_size {
-        for y in 0..sim_y_size {
-            for z in 0..sim_z_size {
+        for z in 0..sim_y_size {
+            let height = ((sim_y_size as f32) * rand::random::<f32>()) as u32;
+            for y in 0..sim_z_size {
                 grid_buffer.set(
                     x,
                     y,
                     z,
                     GridCell {
                         //Initialize the array to be filled with dirt halfway
-                        typeCode: if z > sim_z_size / 2 {
+                        typeCode: if y > height {
                             grid::GRIDCELL_TYPE_AIR
                         } else {
                             grid::GRIDCELL_TYPE_SOIL
@@ -466,7 +462,8 @@ fn main() {
 
         node_buffer.update_all();
         let vertex_buffer = {
-            let vecs = node_buffer.gen_vertex();
+            let mut vecs = node_buffer.gen_vertex();
+            vecs.append(&mut grid_buffer.gen_vertex());
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), vecs.iter().cloned())
                 .unwrap()
         };
@@ -576,7 +573,21 @@ fn main() {
                         VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
                         VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
                         VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
-
+                        VirtualKeyCode::Q => {
+                            // Save and Quit
+                            serialize_to_path(
+                                "./yeet.json",
+                                node_buffer.clone(),
+                                grid_buffer.clone(),
+                            )
+                            .unwrap();
+                            done = true;
+                        }
+                        VirtualKeyCode::R => {
+                            let sim_state = deserialize_from_path("./yeet.json").unwrap();
+                            node_buffer = sim_state.node_buffer;
+                            grid_buffer = sim_state.grid_buffer;
+                        }
                         VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
                         VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
                         VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),
@@ -595,6 +606,39 @@ fn main() {
             return;
         }
     }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SimulationState {
+    node_buffer: NodeBuffer,
+    grid_buffer: GridBuffer,
+}
+
+fn serialize_to_path<P: AsRef<Path>>(
+    path: P,
+    node_buffer: NodeBuffer,
+    grid_buffer: GridBuffer,
+) -> Result<(), Box<Error>> {
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+    let sim_data = SimulationState {
+        node_buffer: node_buffer,
+        grid_buffer: grid_buffer,
+    };
+    let res = serde_json::to_writer(writer, &sim_data)?;
+    Ok(res)
+}
+
+fn deserialize_from_path<P: AsRef<Path>>(path: P) -> Result<SimulationState, Box<Error>> {
+    // Open the file in read-only mode with buffer.
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    // Read the JSON contents of the file as an instance of `User`.
+    let u = serde_json::from_reader(reader)?;
+
+    // Return the data.
+    Ok(u)
 }
 
 fn window_size_dependent_setup(

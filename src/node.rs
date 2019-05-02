@@ -5,8 +5,8 @@
 use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::archetype::*;
-use super::shader::nodeupdategrid::ty::Node;
-use super::shader::nodeupdategrid::ty::NodeMetadata;
+use super::serde::{Deserialize, Serialize};
+use super::shader::nodeupdategrid;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -19,7 +19,7 @@ pub const STATUS_DEAD: u32 = 1; //Node was once alive, but not anymre. It is sus
 pub const STATUS_ALIVE: u32 = 2; //Node is currently alive, and could become dead
 pub const STATUS_NEVER_ALIVE: u32 = 3; //Node is not alive, and cannot die
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NodeBuffer {
     node_list: Vec<Node>,
     free_stack: Vec<u32>,
@@ -91,8 +91,8 @@ fn cylgen(
 }
 
 /// Returns the delta logistic growth
-fn logisticDelta(current: f32, max: f32) -> f32 {
-    current * (max - current)
+fn logisticDelta(current: f32, max: f32, scale: f32) -> f32 {
+    current * (max - current) * scale
 }
 
 fn leafgen(
@@ -147,11 +147,14 @@ fn leafgen(
 }
 
 impl NodeBuffer {
-    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<NodeMetadata>> {
+    pub fn gen_metadata(
+        &self,
+        device: Arc<Device>,
+    ) -> Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>> {
         CpuAccessibleBuffer::from_data(
             device.clone(),
             BufferUsage::uniform_buffer(),
-            NodeMetadata {
+            nodeupdategrid::ty::NodeMetadata {
                 freePtr: self.free_ptr,
                 nodeDataCapacity: self.max_size,
             },
@@ -159,11 +162,14 @@ impl NodeBuffer {
         .unwrap()
     }
 
-    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[Node]>> {
+    pub fn gen_data(
+        &self,
+        device: Arc<Device>,
+    ) -> Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>> {
         CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
-            self.node_list.to_vec().drain(..),
+            self.node_list.to_vec().drain(..).map(|n| n.gpu()),
         )
         .unwrap()
     }
@@ -368,7 +374,7 @@ impl NodeBuffer {
                 match node.archetypeId {
                     INVALID_ARCHETYPE_INDEX => (),
                     GROWING_BUD_ARCHETYPE_INDEX => {
-                        if rand::random::<f32>() > 0.99 {
+                        if rand::random::<f32>() > 0.999 && node.age < 5000 {
                             let leftchildindex = self.alloc();
                             self.node_list[leftchildindex as usize] = node.clone();
                             self.node_list[leftchildindex as usize].transformation =
@@ -398,12 +404,12 @@ impl NodeBuffer {
                         }
                     }
                     STEM_ARCHETYPE_INDEX => {
-                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.1);
-                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.02);
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.1, 1.0);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.02, 1.0);
                     }
                     LEAF_ARCHETYPE_INDEX => {
-                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.3);
-                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.05);
+                        self.node_list[ni as usize].length += logisticDelta(node.length, 0.3, 0.1);
+                        self.node_list[ni as usize].radius += logisticDelta(node.radius, 0.05, 0.5);
                     }
                     _ => println!("oof"),
                 }
@@ -437,6 +443,22 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Node {
+    pub leftChildIndex: u32,
+    pub rightChildIndex: u32,
+    pub parentIndex: u32,
+    pub age: u32,
+    pub archetypeId: u32,
+    pub status: u32,
+    pub visible: u32,
+    pub length: f32,
+    pub radius: f32, // also can be width
+    pub volume: f32,
+    pub absolutePositionCache: [f32; 3],
+    pub transformation: [[f32; 4]; 4],
+}
+
 impl Node {
     // Node has some dummy variables and this function makes it easier to create a default instance
     pub fn new() -> Node {
@@ -449,10 +471,44 @@ impl Node {
             status: STATUS_GARBAGE,
             visible: 0,
             length: 0.0,
-            radius: 0.0, // Also can be width
+            radius: 0.0, // also can be width
             volume: 0.0,
             absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
+        }
+    }
+
+    pub fn fromgpu(node: nodeupdategrid::ty::Node) -> Node {
+        Node {
+            leftChildIndex: node.leftChildIndex,
+            rightChildIndex: node.rightChildIndex,
+            parentIndex: node.parentIndex,
+            age: node.age,
+            archetypeId: node.archetypeId,
+            status: node.status,
+            visible: node.visible,
+            length: node.length,
+            radius: node.radius,
+            volume: node.volume,
+            absolutePositionCache: node.absolutePositionCache,
+            transformation: node.transformation,
+        }
+    }
+
+    pub fn gpu(&self) -> nodeupdategrid::ty::Node {
+        nodeupdategrid::ty::Node {
+            leftChildIndex: self.leftChildIndex,
+            rightChildIndex: self.rightChildIndex,
+            parentIndex: self.parentIndex,
+            age: self.age,
+            archetypeId: self.archetypeId,
+            status: self.status,
+            visible: self.visible,
+            length: self.length,
+            radius: self.radius,
+            volume: self.volume,
+            absolutePositionCache: self.absolutePositionCache,
+            transformation: self.transformation,
             _dummy0: [0; 8],
             _dummy1: [0; 4],
         }

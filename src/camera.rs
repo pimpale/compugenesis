@@ -82,7 +82,7 @@ impl Camera {
     }
 
     pub fn dir_move(&mut self, dir: CameraMovementDir) -> () {
-        let scale = 0.01;
+        let scale = 0.1;
         match dir {
             CameraMovementDir::Forward => self.translate_rot(Vector3::unit_z() * scale),
             CameraMovementDir::Backward => self.translate_rot(-Vector3::unit_z() * scale),
