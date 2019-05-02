@@ -255,15 +255,16 @@ fn main() {
     let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
     for x in 0..sim_x_size {
-        for y in 0..sim_y_size {
-            for z in 0..sim_z_size {
+        for z in 0..sim_y_size {
+            let height = ((sim_y_size as f32) * rand::random::<f32>()) as u32;
+            for y in 0..sim_z_size {
                 grid_buffer.set(
                     x,
                     y,
                     z,
                     GridCell {
                         //Initialize the array to be filled with dirt halfway
-                        typeCode: if z > sim_z_size / 2 {
+                        typeCode: if y > height {
                             grid::GRIDCELL_TYPE_AIR
                         } else {
                             grid::GRIDCELL_TYPE_SOIL

@@ -49,6 +49,10 @@ impl GridBuffer {
     }
 
     fn gen_vertex_cell(&self, x: u32, y: u32, z: u32) -> Vec<Vertex> {
+        if self.get(x, y, z).typeCode != GRIDCELL_TYPE_SOIL {
+            return vec![];
+        }
+
         let lbu = Vertex {
             loc: [x as f32, y as f32, z as f32],
             color: [0.5, 0.9, 0.5],
@@ -63,15 +67,15 @@ impl GridBuffer {
         };
         let rfu = Vertex {
             loc: [(x + 1) as f32, y as f32, (z + 1) as f32],
-            color: [0.5, 0.5, 0.5],
+            color: [0.5, 0.9, 0.5],
         };
         let lbl = Vertex {
             loc: [x as f32, (y + 1) as f32, z as f32],
-            color: [0.5, 0.5, 0.5],
+            color: [0.5, 0.5, 0.9],
         };
         let rbl = Vertex {
             loc: [(x + 1) as f32, (y + 1) as f32, z as f32],
-            color: [0.5, 0.5, 0.5],
+            color: [0.9, 0.5, 0.5],
         };
         let lfl = Vertex {
             loc: [x as f32, (y + 1) as f32, (z + 1) as f32],
@@ -83,12 +87,12 @@ impl GridBuffer {
         };
 
         vec![
-            lbu, rbu, lfu, lfu, rfu, rbu, //upper square
-            lbl, rbl, lfl, lfl, rfl, rbl, //lower square
+            lbu, rbu, lfu, lfu, rfu, rbu, // upper square
+            lbl, rbl, lfl, lfl, rfl, rbl, // lower square
             lfu, rfu, lfl, lfl, rfl, rfu, // front square
             lbu, rbu, lbl, lbl, rbl, rbu, // back square
             lbu, lfu, lbl, lbl, lfl, lfu, // left square
-            rbu, rfu, rbl, rbl, rfl, rfu, //  rightsquare
+            rbu, rfu, rbl, rbl, rfl, rfu, // right square
         ]
     }
 
