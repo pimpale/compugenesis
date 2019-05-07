@@ -83,26 +83,31 @@ impl Camera {
 
     pub fn dir_move(&mut self, dir: CameraMovementDir) -> () {
         let scale = 0.1;
-        match dir {
-            CameraMovementDir::Forward => self.translate_rot(Vector3::unit_z() * scale),
-            CameraMovementDir::Backward => self.translate_rot(-Vector3::unit_z() * scale),
-            CameraMovementDir::Right => self.translate_rot(-Vector3::unit_x() * scale),
-            CameraMovementDir::Left => self.translate_rot(Vector3::unit_x() * scale),
-            CameraMovementDir::Upward => self.translate_rot(Vector3::unit_y() * scale),
-            CameraMovementDir::Downward => self.translate_rot(-Vector3::unit_y() * scale),
-        }
+        self.translate_rot(
+            match dir {
+                CameraMovementDir::Forward => Vector3::unit_z(),
+                CameraMovementDir::Backward => -Vector3::unit_z(),
+                CameraMovementDir::Right => -Vector3::unit_x(),
+                CameraMovementDir::Left => Vector3::unit_x(),
+                CameraMovementDir::Upward => Vector3::unit_y(),
+                CameraMovementDir::Downward => -Vector3::unit_y(),
+            } * scale,
+        );
     }
 
     pub fn dir_rotate(&mut self, dir: CameraRotationDir) -> () {
-        let scale = 0.05;
-        match dir {
-            CameraRotationDir::Right => self.rotate(Matrix4::from_angle_y(Rad(-scale))),
-            CameraRotationDir::Left => self.rotate(Matrix4::from_angle_y(Rad(scale))),
-            CameraRotationDir::Upward => self.rotate(Matrix4::from_angle_x(Rad(scale))),
-            CameraRotationDir::Downward => self.rotate(Matrix4::from_angle_x(Rad(-scale))),
-            CameraRotationDir::Clockwise => self.rotate(Matrix4::from_angle_z(Rad(scale))),
-            CameraRotationDir::Counterclockwise => self.rotate(Matrix4::from_angle_z(Rad(-scale))),
-        }
+        let rotval = 0.05;
+        self.rotate(Matrix4::from_axis_angle(
+            match dir {
+                CameraRotationDir::Right => -Vector3::unit_y(),
+                CameraRotationDir::Left => Vector3::unit_y(),
+                CameraRotationDir::Upward => Vector3::unit_x(),
+                CameraRotationDir::Downward => -Vector3::unit_x(),
+                CameraRotationDir::Clockwise => Vector3::unit_z(),
+                CameraRotationDir::Counterclockwise => -Vector3::unit_z(),
+            },
+            Rad(rotval),
+        ));
     }
 
     pub fn setscreen(&mut self, screen_x: u32, screen_y: u32) -> () {

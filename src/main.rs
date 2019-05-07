@@ -23,8 +23,6 @@ use std::sync::RwLock;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
-#[allow(dead_code)]
-#[allow(unused_imports)]
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
@@ -573,21 +571,9 @@ fn main() {
                         VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
                         VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
                         VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
-                        VirtualKeyCode::Q => {
-                            // Save and Quit
-                            serialize_to_path(
-                                "./yeet.json",
-                                node_buffer.clone(),
-                                grid_buffer.clone(),
-                            )
-                            .unwrap();
-                            done = true;
-                        }
-                        VirtualKeyCode::R => {
-                            let sim_state = deserialize_from_path("./yeet.json").unwrap();
-                            node_buffer = sim_state.node_buffer;
-                            grid_buffer = sim_state.grid_buffer;
-                        }
+                        VirtualKeyCode::Q => camera.dir_move(CameraMovementDir::Upward),
+                        VirtualKeyCode::E => camera.dir_move(CameraMovementDir::Downward),
+
                         VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
                         VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
                         VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),

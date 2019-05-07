@@ -157,6 +157,7 @@ impl NodeBuffer {
             nodeupdategrid::ty::NodeMetadata {
                 freePtr: self.free_ptr,
                 nodeDataCapacity: self.max_size,
+                freeStack: self.free_stack.to_vec().drain(..),
             },
         )
         .unwrap()
@@ -174,15 +175,6 @@ impl NodeBuffer {
         .unwrap()
     }
 
-    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.free_stack.to_vec().drain(..),
-        )
-        .unwrap()
-    }
-
     pub fn new(size: u32) -> NodeBuffer {
         if size == 0 || size == INVALID_INDEX {
             panic!("invalid size for node buffer")
@@ -192,6 +184,20 @@ impl NodeBuffer {
             free_stack: (0..size).collect(),             // Create list of all free node locations
             free_ptr: size,                              // The current pointer to the active stack
             max_size: size, // The maximum size to which the stack may grow
+        }
+    }
+
+    pub fn from_gpu_buffer(
+        metadata: Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>>,
+        data: Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>>,
+    ) -> NodeBuffer {
+        let node_data = data.read().unwrap();
+        let node_metadata = metadata.read().unwrap();
+        NodeBuffer {
+            node_list: node_data.into(),
+            free_stack: node_metadata.freeStack.into(),
+            free_ptr: node_metadata.freePtr,
+            max_size: node_metadata: nodeDataCapacity,
         }
     }
 
@@ -374,20 +380,24 @@ impl NodeBuffer {
                 match node.archetypeId {
                     INVALID_ARCHETYPE_INDEX => (),
                     GROWING_BUD_ARCHETYPE_INDEX => {
-                        if rand::random::<f32>() > 0.999 && node.age < 5000 {
+                        if rand::random::<f32>() > 0.999 && node.age < 9000 {
                             let leftchildindex = self.alloc();
                             self.node_list[leftchildindex as usize] = node.clone();
                             self.node_list[leftchildindex as usize].transformation =
-                                Matrix4::one().into();
+                                (Matrix4::from_angle_z(Rad((rand::random::<f32>() - 0.5) * 0.5))
+                                    * Matrix4::from_angle_x(Rad(
+                                        (rand::random::<f32>() - 0.5) * 0.5
+                                    )))
+                                .into();
                             node.archetypeId = STEM_ARCHETYPE_INDEX;
                             node.length = 0.001;
                             self.node_list[ni as usize] = node;
                             self.set_left_child(ni, leftchildindex);
-                            if rand::random::<f32>() > 0.3 {
+                            if rand::random::<f32>() > 0.99 {
                                 let rightchildindex = self.alloc();
                                 // Create new node for leaf
                                 let mut leafnode = Node::new();
-                                leafnode.archetypeId = LEAF_ARCHETYPE_INDEX;
+                                leafnode.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
                                 leafnode.visible = 1;
                                 leafnode.status = STATUS_ALIVE;
                                 leafnode.length = 0.001;
