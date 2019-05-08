@@ -157,7 +157,6 @@ impl NodeBuffer {
             nodeupdategrid::ty::NodeMetadata {
                 freePtr: self.free_ptr,
                 nodeDataCapacity: self.max_size,
-                freeStack: self.free_stack.to_vec().drain(..),
             },
         )
         .unwrap()
@@ -171,6 +170,15 @@ impl NodeBuffer {
             device.clone(),
             BufferUsage::all(),
             self.node_list.to_vec().drain(..).map(|n| n.gpu()),
+        )
+        .unwrap()
+    }
+
+    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
+        CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            self.free_stack.to_vec().drain(..),
         )
         .unwrap()
     }
