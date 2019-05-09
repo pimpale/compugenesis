@@ -198,14 +198,16 @@ impl NodeBuffer {
     pub fn from_gpu_buffer(
         metadata: Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>>,
         data: Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>>,
+        freestack: Arc<CpuAccessibleBuffer<[u32]>>,
     ) -> NodeBuffer {
         let node_data = data.read().unwrap();
         let node_metadata = metadata.read().unwrap();
+        let node_freestack = freestack.read().unwrap();
         NodeBuffer {
-            node_list: node_data.into(),
-            free_stack: node_metadata.freeStack.into(),
+            node_list: node_data.iter().map(|&n| Node::fromgpu(n)).collect(),
+            free_stack: node_freestack.iter().cloned().collect(),
             free_ptr: node_metadata.freePtr,
-            max_size: node_metadata: nodeDataCapacity,
+            max_size: node_metadata.nodeDataCapacity,
         }
     }
 
