@@ -117,8 +117,7 @@ impl Camera {
     }
 
     fn rotate_by_camera(&self, vec: Vector3<f32>) -> Vector3<f32> {
-        let newvec = self.rotation * Vector4::new(vec.x, vec.y, vec.z, 1.0);
-        Vector3::new(newvec.x, newvec.y, newvec.z)
+        (self.rotation * vec.extend(1.0)).truncate()
     }
 
     fn genview(&mut self) -> () {
