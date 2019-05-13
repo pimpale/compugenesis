@@ -195,6 +195,22 @@ impl NodeBuffer {
         }
     }
 
+    pub fn from_gpu_buffer(
+        metadata: Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>>,
+        data: Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>>,
+        freestack: Arc<CpuAccessibleBuffer<[u32]>>,
+    ) -> NodeBuffer {
+        let node_data = data.read().unwrap();
+        let node_metadata = metadata.read().unwrap();
+        let node_freestack = freestack.read().unwrap();
+        NodeBuffer {
+            node_list: node_data.iter().map(|&n| Node::fromgpu(n)).collect(),
+            free_stack: node_freestack.iter().cloned().collect(),
+            free_ptr: node_metadata.freePtr,
+            max_size: node_metadata.nodeDataCapacity,
+        }
+    }
+
     pub fn get(&self, index: u32) -> Node {
         self.node_list[index as usize].clone()
     }
@@ -374,20 +390,24 @@ impl NodeBuffer {
                 match node.archetypeId {
                     INVALID_ARCHETYPE_INDEX => (),
                     GROWING_BUD_ARCHETYPE_INDEX => {
-                        if rand::random::<f32>() > 0.999 && node.age < 5000 {
+                        if rand::random::<f32>() > 0.999 && node.age < 9000 {
                             let leftchildindex = self.alloc();
                             self.node_list[leftchildindex as usize] = node.clone();
                             self.node_list[leftchildindex as usize].transformation =
-                                Matrix4::one().into();
+                                (Matrix4::from_angle_z(Rad((rand::random::<f32>() - 0.5) * 0.5))
+                                    * Matrix4::from_angle_x(Rad(
+                                        (rand::random::<f32>() - 0.5) * 0.5
+                                    )))
+                                .into();
                             node.archetypeId = STEM_ARCHETYPE_INDEX;
                             node.length = 0.001;
                             self.node_list[ni as usize] = node;
                             self.set_left_child(ni, leftchildindex);
-                            if rand::random::<f32>() > 0.3 {
+                            if rand::random::<f32>() > 0.99 {
                                 let rightchildindex = self.alloc();
                                 // Create new node for leaf
                                 let mut leafnode = Node::new();
-                                leafnode.archetypeId = LEAF_ARCHETYPE_INDEX;
+                                leafnode.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
                                 leafnode.visible = 1;
                                 leafnode.status = STATUS_ALIVE;
                                 leafnode.length = 0.001;

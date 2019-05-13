@@ -15,28 +15,26 @@ pub struct SettingsPacket {
     pub simulation_duration: Option<u32>, //In cycles
 }
 
-pub fn gtk_setup(settings_packet: Arc<RwLock<SettingsPacket>>) -> () {
-    std::thread::spawn(move || {
-        let application = gtk::Application::new(
-            "com.github.gtk-rs.examples.basic",
-            ApplicationFlags::empty(),
-        )
-        .expect("Initialization failed...");
-        application.connect_activate(move |app| {
-            let window = gtk::ApplicationWindow::new(app);
+pub fn gtk_run(settings_packet: Arc<RwLock<SettingsPacket>>) -> () {
+    let application = gtk::Application::new(
+        "com.github.gtk-rs.examples.basic",
+        ApplicationFlags::empty(),
+    )
+    .expect("Initialization failed...");
+    application.connect_activate(move |app| {
+        let window = gtk::ApplicationWindow::new(app);
 
-            window.set_title("CompuGenesis");
-            window.set_border_width(10);
-            window.set_position(gtk::WindowPosition::Center);
-            window.set_default_size(350, 350);
+        window.set_title("CompuGenesis");
+        window.set_border_width(10);
+        window.set_position(gtk::WindowPosition::Center);
+        window.set_default_size(350, 350);
 
-            simulation_screen(window.clone(), settings_packet.clone());
+        simulation_screen(window.clone(), settings_packet.clone());
 
-            window.set_default_size(350, 350);
-        });
-
-        application.run(&[] as &[&str]);
+        window.set_default_size(350, 350);
     });
+
+    application.run(&[] as &[&str]);
 }
 
 fn welcome_screen(
