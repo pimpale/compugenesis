@@ -47,20 +47,20 @@ use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEven
 
 mod archetype;
 mod camera;
-mod compute;
 mod grid;
 mod gui;
 mod node;
 mod shader;
+mod simulate;
 mod util;
 mod vertex;
 
 use archetype::*;
 use camera::*;
-use compute::*;
 use grid::*;
 use gui::*;
 use node::*;
+use simulate::*;
 
 fn create_instance() -> (Arc<Instance>, DebugCallback) {
     let instance = {
@@ -427,12 +427,6 @@ fn main() {
             return;
         }
     }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct SimulationState {
-    node_buffer: NodeBuffer,
-    grid_buffer: GridBuffer,
 }
 
 fn serialize_to_path<P: AsRef<Path>>(

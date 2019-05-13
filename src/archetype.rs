@@ -8,6 +8,7 @@ pub const GROWING_BUD_ARCHETYPE_INDEX: u32 = 5;
 #[derive(Debug, Clone)]
 pub struct Archetype {
     pub color: [f32; 3],
+
     pub phototropism: f32,
 }
 

@@ -26,6 +26,18 @@ pub struct GridBuffer {
 }
 
 impl GridBuffer {
+    pub fn xsize(&self) -> u32 {
+        self.xsize
+    }
+
+    pub fn ysize(&self) -> u32 {
+        self.ysize
+    }
+
+    pub fn zsize(&self) -> u32 {
+        self.zsize
+    }
+
     pub fn new(xsize: u32, ysize: u32, zsize: u32) -> GridBuffer {
         GridBuffer {
             xsize: xsize,

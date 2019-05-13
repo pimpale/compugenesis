@@ -1,7 +1,7 @@
 vulkano_shaders::shader! {
     ty: "compute",
-    src:
-"#version 450
+    src: "
+#version 450
 
 /* BEGIN COMMON HEADER */
 

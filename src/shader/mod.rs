@@ -2,6 +2,8 @@
 pub mod frag;
 pub mod vert;
 
+pub mod header;
+
 //Compute shader modules
 pub mod gridupdategrid;
 pub mod gridupdatenode;
