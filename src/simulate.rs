@@ -11,6 +11,7 @@ use super::vulkano::image::SwapchainImage;
 use super::vulkano::instance::debug::{DebugCallback, MessageTypes};
 use super::vulkano::instance::{Instance, PhysicalDevice};
 use super::vulkano::pipeline::ComputePipeline;
+use super::vulkano::pipeline::ComputePipelineAbstract;
 use super::vulkano::swapchain;
 use super::vulkano::sync;
 use super::vulkano::sync::FlushError;
@@ -19,16 +20,18 @@ use super::vulkano::sync::GpuFuture;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use super::grid::*;
-use super::node::*;
+use super::grid;
+use super::node;
+use super::plant;
+
 use super::shader;
 use super::shader::header::ty;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimulationState {
-    node_buffer: NodeBuffer,
-    grid_buffer: GridBuffer,
-    plant_buffer: PlantBuffer,
+    node_buffer: node::NodeBuffer,
+    grid_buffer: grid::GridBuffer,
+    plant_buffer: plant::PlantBuffer,
 }
 
 #[derive(Clone)]
@@ -68,27 +71,137 @@ impl Control {
 }
 
 fn run_cycle(
-    grid_data_buffer_read: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
-    grid_data_buffer_write: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
-    grid_metadata_buffer_read: Arc<CpuAccessibleBuffer<ty::GridMetadata>>,
-    grid_metadata_buffer_write: Arc<CpuAccessibleBuffer<ty::GridMetadata>>,
+    queue: Arc<Queue>,
+    device: Arc<Device>,
+    previous_frame_end: Box<GpuFuture>,
 
-    node_data_buffer_read: Arc<CpuAccessibleBuffer<[ty::Node]>>,
-    node_data_buffer_write: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+    // Node Count
+    node_count: u32,
 
-    node_freestack_buffer_read: Arc<CpuAccessibleBuffer<[ty::Node]>>,
-    node_freestack_buffer_write: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+    // Pipelines
+    gridupdatenode_pipeline: Arc<ComputePipelineAbstract>,
+    nodeupdatenode_pipeline: Arc<ComputePipelineAbstract>,
 
-    node_metadata_buffer_read: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
-    node_metadata_buffer_write: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
+    // Grid Data
+    grid_data_buffer: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
+    grid_data_buffer_alt: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
 
-    plant_data_buffer_read: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
-    plant_data_buffer_write: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
+    // Grid Metadata
+    grid_metadata_buffer: Arc<CpuAccessibleBuffer<ty::GridMetadata>>,
+    grid_metadata_buffer_alt: Arc<CpuAccessibleBuffer<ty::GridMetadata>>,
 
-    plant_metadata_buffer_read: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
-    plant_metadata_buffer_write: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
+    // Node Data
+    node_data_buffer: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+    node_data_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+
+    // Node Freestack
+    node_freestack_buffer: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+    node_freestack_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+
+    // Node Metadata
+    node_metadata_buffer: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
+    node_metadata_buffer_alt: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
+
+    // Plant data
+    plant_data_buffer: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
+    plant_data_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
+
+    // Plant Metadata
+    plant_metadata_buffer: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
+    plant_metadata_buffer_alt: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
 ) -> () {
+    let gridupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
+            // Read grid
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            // Write grid
+            .add_buffer(grid_metadata_buffer_alt.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer_alt.clone())
+            .unwrap()
+            // Read node
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            // Write Node
+            .add_buffer(node_metadata_buffer_alt.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer_alt.clone())
+            .unwrap()
+            // Build
+            .build()
+            .unwrap(),
+    );
 
+    // This runs afterwards. We read from the newly written grid and write to the old grid
+    let nodeupdatenode_set = Arc::new(
+        PersistentDescriptorSet::start(nodeupdatenode_pipeline.clone(), 0)
+            // Read grid
+            .add_buffer(grid_metadata_buffer_alt.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer_alt.clone())
+            .unwrap()
+            // Write grid
+            .add_buffer(grid_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(grid_data_buffer.clone())
+            .unwrap()
+            // Read node
+            .add_buffer(node_metadata_buffer_alt.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer_alt.clone())
+            .unwrap()
+            // Write Node
+            .add_buffer(node_metadata_buffer.clone())
+            .unwrap()
+            .add_buffer(node_data_buffer.clone())
+            .unwrap()
+            // Build
+            .build()
+            .unwrap(),
+    );
+
+    let gridupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_count, 1, 1],
+                gridupdatenode_pipeline.clone(),
+                gridupdatenode_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let nodeupdatenode_command_buffer =
+        AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap()
+            .dispatch(
+                [node_count, 1, 1],
+                nodeupdatenode_pipeline.clone(),
+                nodeupdatenode_set.clone(),
+                (),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+
+    let future = previous_frame_end
+        .then_execute(queue.clone(), gridupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap()
+        .then_execute(queue.clone(), nodeupdatenode_command_buffer)
+        .unwrap()
+        .then_signal_fence_and_flush()
+        .unwrap();
+
+    Box::new(future) as Box<_>;
 }
 
 fn simulate(
@@ -99,21 +212,22 @@ fn simulate(
 ) -> () {
     let node_buffer = state.node_buffer;
     let grid_buffer = state.grid_buffer;
+    let plant_buffer = state.plant_buffer;
 
     // GPU Buffers that will be used for the data
-    let grid_data_buffer_1 = grid_buffer.gen_data(device.clone());
-    let grid_metadata_buffer_1 = grid_buffer.gen_metadata(device.clone());
+    let grid_data_buffer = grid_buffer.gen_data(device.clone());
+    let grid_metadata_buffer = grid_buffer.gen_metadata(device.clone());
 
-    let grid_data_buffer_2 = grid_buffer.gen_data(device.clone());
-    let grid_metadata_buffer_2 = grid_buffer.gen_metadata(device.clone());
+    let grid_data_buffer_alt = grid_buffer.gen_data(device.clone());
+    let grid_metadata_buffer_alt = grid_buffer.gen_metadata(device.clone());
 
-    let node_metadata_buffer_1 = node_buffer.gen_metadata(device.clone());
-    let node_data_buffer_1 = node_buffer.gen_data(device.clone());
-    let node_freestack_buffer_1 = node_buffer.gen_freestack(device.clone());
+    let node_metadata_buffer = node_buffer.gen_metadata(device.clone());
+    let node_data_buffer = node_buffer.gen_data(device.clone());
+    let node_freestack_buffer = node_buffer.gen_freestack(device.clone());
 
-    let node_metadata_buffer_2 = node_buffer.gen_metadata(device.clone());
-    let node_data_buffer_2 = node_buffer.gen_data(device.clone());
-    let node_freestack_buffer_2 = node_buffer.gen_freestack(device.clone());
+    let node_metadata_buffer_alt = node_buffer.gen_metadata(device.clone());
+    let node_data_buffer_alt = node_buffer.gen_data(device.clone());
+    let node_freestack_buffer_alt = node_buffer.gen_freestack(device.clone());
 
     // Load shaders
     let gridupdatenode = shader::gridupdatenode::Shader::load(device.clone()).unwrap();
@@ -123,135 +237,33 @@ fn simulate(
         ComputePipeline::new(device.clone(), &gridupdatenode.main_entry_point(), &()).unwrap(),
     );
 
-    let nodeupdatenode_pipeline = Arc::new(
+    let nodeupdatenode_pipeline: Arc<ComputePipeline> = Arc::new(
         ComputePipeline::new(device.clone(), &nodeupdatenode.main_entry_point(), &()).unwrap(),
     );
 
     let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
 
     loop {
-        let gridupdatenode_set_1 = Arc::new(
-            PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
-                .add_buffer(node_metadata_buffer_1.clone())
-                .unwrap()
-                .add_buffer(node_data_buffer_1.clone())
-                .unwrap()
-                .add_buffer(grid_metadata_buffer_1.clone())
-                .unwrap()
-                .add_buffer(grid_data_buffer_1.clone())
-                .unwrap()
-                .build()
-                .unwrap(),
+        previous_frame_end = run_cycle(
+            queue.clone(),
+            device.clone(),
+            previous_frame_end,
+            node_buffer.size(),
+            gridupdatenode_pipeline.clone(),
+            nodeupdatenode_pipeline.clone(),
+            grid_data_buffer.clone(),
+            grid_data_buffer_alt.clone(),
+            grid_metadata_buffer.clone(),
+            grid_metadata_buffer_alt.clone(),
+            node_data_buffer.clone(),
+            node_data_buffer_alt.clone(),
+            node_freestack_buffer.clone(),
+            node_freestack_buffer_alt.clone(),
+            node_metadata_buffer.clone(),
+            node_metadata_buffer_alt.clone(),
+            plant_data_buffer_alt.clone(),
+            plant_metadata_buffer.clone(),
+            plant_metadata_buffer_alt.clone(),
         );
-
-        let gridupdatenode_set_2 = Arc::new(
-            PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
-                .add_buffer(node_metadata_buffer_2.clone())
-                .unwrap()
-                .add_buffer(node_data_buffer_2.clone())
-                .unwrap()
-                .add_buffer(grid_metadata_buffer_2.clone())
-                .unwrap()
-                .add_buffer(grid_data_buffer_2.clone())
-                .unwrap()
-                .build()
-                .unwrap(),
-        );
-
-        let nodeupdatenode_set_1 = Arc::new(
-            PersistentDescriptorSet::start(nodeupdatenode_pipeline.clone(), 0)
-                .add_buffer(node_metadata_buffer_1.clone())
-                .unwrap()
-                .add_buffer(node_data_buffer_1.clone())
-                .unwrap()
-                .add_buffer(node_freestack_buffer_1.clone())
-                .unwrap()
-                .add_buffer(grid_metadata_buffer_1.clone())
-                .unwrap()
-                .add_buffer(grid_data_buffer_1.clone())
-                .unwrap()
-                .build()
-                .unwrap(),
-        );
-        let nodeupdatenode_set_2 = Arc::new(
-            PersistentDescriptorSet::start(nodeupdatenode_pipeline.clone(), 0)
-                .add_buffer(node_metadata_buffer_2.clone())
-                .unwrap()
-                .add_buffer(node_data_buffer_2.clone())
-                .unwrap()
-                .add_buffer(node_freestack_buffer_2.clone())
-                .unwrap()
-                .add_buffer(grid_metadata_buffer_2.clone())
-                .unwrap()
-                .add_buffer(grid_data_buffer_2.clone())
-                .unwrap()
-                .build()
-                .unwrap(),
-        );
-
-        // Create command buffers that describe how the shader is to be executed
-        let gridupdatenode_command_buffer_1 =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .dispatch(
-                    [node_buffer.size(), 1, 1],
-                    gridupdatenode_pipeline.clone(),
-                    gridupdatenode_set_1.clone(),
-                    (),
-                )
-                .unwrap()
-                .build()
-                .unwrap();
-
-        let gridupdatenode_command_buffer_2 =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .dispatch(
-                    [node_buffer.size(), 1, 1],
-                    gridupdatenode_pipeline_2.clone(),
-                    gridupdatenode_set.clone(),
-                    (),
-                )
-                .unwrap()
-                .build()
-                .unwrap();
-
-        let nodeupdatenode_command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .dispatch(
-                    [node_buffer.size(), 1, 1],
-                    nodeupdatenode_pipeline_1.clone(),
-                    nodeupdatenode_set.clone(),
-                    (),
-                )
-                .unwrap()
-                .build()
-                .unwrap();
-
-        let nodeupdatenode_command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .dispatch(
-                    [node_buffer.size(), 1, 1],
-                    nodeupdatenode_pipeline_2.clone(),
-                    nodeupdatenode_set.clone(),
-                    (),
-                )
-                .unwrap()
-                .build()
-                .unwrap();
-
-        let future = previous_frame_end
-            .then_execute(queue.clone(), gridupdatenode_command_buffer)
-            .unwrap()
-            .then_signal_fence_and_flush()
-            .unwrap()
-            .then_execute(queue.clone(), nodeupdatenode_command_buffer)
-            .unwrap()
-            .then_signal_fence_and_flush()
-            .unwrap();
-
-        previous_frame_end = Box::new(future) as Box<_>;
     }
 }

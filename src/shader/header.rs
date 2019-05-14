@@ -1,7 +1,7 @@
 vulkano_shaders::shader! {
     ty: "compute",
-    src:
-"#version 450
+    src: "
+#version 450
 
 /* BEGIN COMMON HEADER */
 
@@ -71,11 +71,14 @@ layout(binding = 3) buffer GridData {
   GridCell gridCell[];
 } gridData;
 
-layout(binding = 4) buffer PlantMetadata {
+layout(binding = 4) uniform PlantMetadata {
   uint dataCapacity; // Number of nodes that can fit within the buffer
   uint freePtr; // Index of free stack
-};
+} plantMetadata;
 
+layout(binding = 5) buffer PlantData {
+    Plant plants[];
+} plantData;
 
 void main() {
 }

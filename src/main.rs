@@ -50,6 +50,7 @@ mod camera;
 mod grid;
 mod gui;
 mod node;
+mod plant;
 mod shader;
 mod simulate;
 mod util;

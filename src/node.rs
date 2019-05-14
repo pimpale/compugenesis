@@ -6,7 +6,8 @@ use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::archetype::*;
 use super::serde::{Deserialize, Serialize};
-use super::shader::nodeupdategrid;
+use super::shader::header;
+use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -147,14 +148,11 @@ fn leafgen(
 }
 
 impl NodeBuffer {
-    pub fn gen_metadata(
-        &self,
-        device: Arc<Device>,
-    ) -> Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>> {
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::NodeMetadata>> {
         CpuAccessibleBuffer::from_data(
             device.clone(),
             BufferUsage::uniform_buffer(),
-            nodeupdategrid::ty::NodeMetadata {
+            ty::NodeMetadata {
                 freePtr: self.free_ptr,
                 nodeDataCapacity: self.max_size,
             },
@@ -162,10 +160,7 @@ impl NodeBuffer {
         .unwrap()
     }
 
-    pub fn gen_data(
-        &self,
-        device: Arc<Device>,
-    ) -> Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>> {
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::Node]>> {
         CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
@@ -196,8 +191,8 @@ impl NodeBuffer {
     }
 
     pub fn from_gpu_buffer(
-        metadata: Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>>,
-        data: Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>>,
+        metadata: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
+        data: Arc<CpuAccessibleBuffer<[ty::Node]>>,
         freestack: Arc<CpuAccessibleBuffer<[u32]>>,
     ) -> NodeBuffer {
         let node_data = data.read().unwrap();
@@ -470,12 +465,12 @@ pub struct Node {
     pub parentIndex: u32,
     pub age: u32,
     pub archetypeId: u32,
+    pub plantId: u32,
     pub status: u32,
     pub visible: u32,
     pub length: f32,
     pub radius: f32, // also can be width
     pub volume: f32,
-    pub absolutePositionCache: [f32; 3],
     pub transformation: [[f32; 4]; 4],
 }
 
@@ -498,7 +493,7 @@ impl Node {
         }
     }
 
-    pub fn fromgpu(node: nodeupdategrid::ty::Node) -> Node {
+    pub fn fromgpu(node: ty::Node) -> Node {
         Node {
             leftChildIndex: node.leftChildIndex,
             rightChildIndex: node.rightChildIndex,
@@ -515,8 +510,8 @@ impl Node {
         }
     }
 
-    pub fn gpu(&self) -> nodeupdategrid::ty::Node {
-        nodeupdategrid::ty::Node {
+    pub fn gpu(&self) -> ty::Node {
+        ty::Node {
             leftChildIndex: self.leftChildIndex,
             rightChildIndex: self.rightChildIndex,
             parentIndex: self.parentIndex,
