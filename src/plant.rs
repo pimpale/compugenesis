@@ -184,9 +184,9 @@ impl PlantBuffer {
         }
         PlantBuffer {
             plant_list: vec![Plant::new(); size as usize], // Create list with default plants
-            free_stack: (0..size).collect(),             // Create list of all free plant locations
-            free_ptr: size,                              // The current pointer to the active stack
-            max_size: size, // The maximum size to which the stack may grow
+            free_stack: (0..size).collect(), // Create list of all free plant locations
+            free_ptr: size,                  // The current pointer to the active stack
+            max_size: size,                  // The maximum size to which the stack may grow
         }
     }
 
@@ -249,8 +249,7 @@ impl PlantBuffer {
     pub fn current_size(&self) -> u32 {
         self.max_size - self.free_ptr
     }
-
-} 
+}
 
 fn tomat(mat: [[f32; 4]; 4]) -> Matrix4<f32> {
     Matrix4::from_cols(
@@ -279,72 +278,32 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Plant {
-    pub leftChildIndex: u32,
-    pub rightChildIndex: u32,
-    pub parentIndex: u32,
-    pub age: u32,
-    pub archetypeId: u32,
-    pub plantId: u32,
     pub status: u32,
-    pub visible: u32,
-    pub length: f32,
-    pub radius: f32, // also can be width
-    pub volume: f32,
-    pub transformation: [[f32; 4]; 4],
+    pub age: u32,
+    pub location: [f32; 3],
 }
 
 impl Plant {
     // Plant has some dummy variables and this function makes it easier to create a default instance
     pub fn new() -> Plant {
         Plant {
-            leftChildIndex: INVALID_INDEX,
-            rightChildIndex: INVALID_INDEX,
-            parentIndex: INVALID_INDEX,
-            age: 0,
-            archetypeId: INVALID_ARCHETYPE_INDEX,
-            status: STATUS_GARBAGE,
-            visible: 0,
-            length: 0.0,
-            radius: 0.0, // also can be width
-            volume: 0.0,
-            absolutePositionCache: [0.0, 0.0, 0.0],
-            transformation: Matrix4::one().into(),
+            position: [0.0, 0.0, 0.0],
         }
     }
 
     pub fn fromgpu(plant: ty::Plant) -> Plant {
         Plant {
-            leftChildIndex: plant.leftChildIndex,
-            rightChildIndex: plant.rightChildIndex,
-            parentIndex: plant.parentIndex,
-            age: plant.age,
-            archetypeId: plant.archetypeId,
-            status: plant.status,
-            visible: plant.visible,
-            length: plant.length,
-            radius: plant.radius,
-            volume: plant.volume,
-            absolutePositionCache: plant.absolutePositionCache,
-            transformation: plant.transformation,
+            status: STATUS_GARBAGE,
+            age: 0,
+            location: [0.0, 0.0, 0.0],
         }
     }
 
     pub fn gpu(&self) -> ty::Plant {
         ty::Plant {
-            leftChildIndex: self.leftChildIndex,
-            rightChildIndex: self.rightChildIndex,
-            parentIndex: self.parentIndex,
-            age: self.age,
-            archetypeId: self.archetypeId,
-            status: self.status,
-            visible: self.visible,
-            length: self.length,
-            radius: self.radius,
-            volume: self.volume,
-            absolutePositionCache: self.absolutePositionCache,
-            transformation: self.transformation,
-            _dummy0: [0; 8],
-            _dummy1: [0; 4],
+            status: STATUS_GARBAGE,
+            age: 0,
+            location: [0.0, 0.0, 0.0],
         }
     }
 }

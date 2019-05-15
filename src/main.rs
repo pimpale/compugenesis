@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate vulkano;
 extern crate cgmath;
 extern crate csv;
 extern crate gio;
@@ -5,7 +7,6 @@ extern crate gtk;
 extern crate rand;
 extern crate serde;
 extern crate serde_json;
-extern crate vulkano;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
@@ -138,9 +139,11 @@ fn main() {
         simulation_duration: None, //In cycles
     }));
 
+    /* TODO make gui
     std::thread::spawn(move || {
-        gtk_setup(settings_packet.clone());
+        gtk_run(settings_packet.clone());
     });
+    */
 
     let queue = queues.next().unwrap();
 

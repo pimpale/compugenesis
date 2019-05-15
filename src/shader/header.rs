@@ -33,7 +33,7 @@ struct Node {
   float length; // Length in meters (used for displacement)
   float radius;   // Radius in square meters (used for photosynthesis + wind)
   float volume; // Volume in cubic meters (used for light calculations)
-  mat4 transformation; //Transformation from parent node
+  mat4 transformation; // Transformation from parent node
 };
 
 struct GridCell {
@@ -46,7 +46,7 @@ struct GridCell {
 };
 
 struct Plant {
-  vec3 absolutePositionCache;
+  vec4 absolutePositionCache;
 };
 
 
@@ -81,6 +81,7 @@ layout(binding = 5) buffer PlantData {
 } plantData;
 
 void main() {
+    uint id = gl_GlobalInvocationID.x;
 }
 
 /* END COMMON HEADER */

@@ -12,6 +12,7 @@ use super::vulkano::instance::debug::{DebugCallback, MessageTypes};
 use super::vulkano::instance::{Instance, PhysicalDevice};
 use super::vulkano::pipeline::ComputePipeline;
 use super::vulkano::pipeline::ComputePipelineAbstract;
+use super::vulkano::pipeline::PipelineLayout;
 use super::vulkano::swapchain;
 use super::vulkano::sync;
 use super::vulkano::sync::FlushError;
@@ -79,8 +80,12 @@ fn run_cycle(
     node_count: u32,
 
     // Pipelines
-    gridupdatenode_pipeline: Arc<ComputePipelineAbstract>,
-    nodeupdatenode_pipeline: Arc<ComputePipelineAbstract>,
+    gridupdatenode_pipeline: Arc<
+        ComputePipeline<PipelineLayout<shader::gridupdatenode::Shader::PipelineLayout>>,
+    >,
+    nodeupdatenode_pipeline: Arc<
+        ComputePipeline<PipelineLayout<shader::nodeupdatenode::Shader::PipelineLayout>>,
+    >,
 
     // Grid Data
     grid_data_buffer: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
@@ -95,8 +100,8 @@ fn run_cycle(
     node_data_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Node]>>,
 
     // Node Freestack
-    node_freestack_buffer: Arc<CpuAccessibleBuffer<[ty::Node]>>,
-    node_freestack_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Node]>>,
+    node_freestack_buffer: Arc<CpuAccessibleBuffer<[u32]>>,
+    node_freestack_buffer_alt: Arc<CpuAccessibleBuffer<[u32]>>,
 
     // Node Metadata
     node_metadata_buffer: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
@@ -106,10 +111,14 @@ fn run_cycle(
     plant_data_buffer: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
     plant_data_buffer_alt: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
 
+    // Plant Freestack
+    plant_freestack_buffer: Arc<CpuAccessibleBuffer<[u32]>>,
+    plant_freestack_buffer_alt: Arc<CpuAccessibleBuffer<[u32]>>,
+
     // Plant Metadata
     plant_metadata_buffer: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
     plant_metadata_buffer_alt: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
-) -> () {
+) -> Box<GpuFuture> {
     let gridupdatenode_set = Arc::new(
         PersistentDescriptorSet::start(gridupdatenode_pipeline.clone(), 0)
             // Read grid
@@ -229,6 +238,14 @@ fn simulate(
     let node_data_buffer_alt = node_buffer.gen_data(device.clone());
     let node_freestack_buffer_alt = node_buffer.gen_freestack(device.clone());
 
+    let plant_metadata_buffer = plant_buffer.gen_metadata(device.clone());
+    let plant_data_buffer = plant_buffer.gen_data(device.clone());
+    let plant_freestack_buffer = plant_buffer.gen_freestack(device.clone());
+
+    let plant_metadata_buffer_alt = plant_buffer.gen_metadata(device.clone());
+    let plant_data_buffer_alt = plant_buffer.gen_data(device.clone());
+    let plant_freestack_buffer_alt = plant_buffer.gen_freestack(device.clone());
+
     // Load shaders
     let gridupdatenode = shader::gridupdatenode::Shader::load(device.clone()).unwrap();
     let nodeupdatenode = shader::nodeupdatenode::Shader::load(device.clone()).unwrap();
@@ -237,7 +254,7 @@ fn simulate(
         ComputePipeline::new(device.clone(), &gridupdatenode.main_entry_point(), &()).unwrap(),
     );
 
-    let nodeupdatenode_pipeline: Arc<ComputePipeline> = Arc::new(
+    let nodeupdatenode_pipeline = Arc::new(
         ComputePipeline::new(device.clone(), &nodeupdatenode.main_entry_point(), &()).unwrap(),
     );
 
@@ -261,7 +278,10 @@ fn simulate(
             node_freestack_buffer_alt.clone(),
             node_metadata_buffer.clone(),
             node_metadata_buffer_alt.clone(),
+            plant_data_buffer.clone(),
             plant_data_buffer_alt.clone(),
+            plant_freestack_buffer.clone(),
+            plant_freestack_buffer_alt.clone(),
             plant_metadata_buffer.clone(),
             plant_metadata_buffer_alt.clone(),
         );

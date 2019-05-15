@@ -5,7 +5,7 @@
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::serde::{Deserialize, Serialize};
-use super::shader::gridupdategrid::ty;
+use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
