@@ -3,6 +3,7 @@
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
 use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
+use std::convert::TryInto;
 
 use super::archetype::*;
 use super::serde::{Deserialize, Serialize};
@@ -28,125 +29,6 @@ pub struct PlantBuffer {
     max_size: u32,
 }
 
-fn perpendicular_vector(vec: Vector3<f32>) -> Vector3<f32> {
-    // The cross product with itself will be zero, so we have 2 options
-    if vec == Vector3::unit_x() {
-        vec.cross(Vector3::unit_y()).normalize()
-    } else {
-        vec.cross(Vector3::unit_x()).normalize()
-    }
-}
-
-fn cylgen(
-    source_loc: Vector3<f32>,
-    end_loc: Vector3<f32>,
-    radius: f32,
-    color1: [f32; 3],
-    color2: [f32; 3],
-) -> Vec<Vertex> {
-    let vec = end_loc - source_loc;
-    let mut hexvec = perpendicular_vector(vec) * radius;
-    let mut face1: Vec<Vector3<f32>> = Vec::new();
-    let mut face2: Vec<Vector3<f32>> = Vec::new();
-    for i in 0..6 {
-        face1.push(hexvec + source_loc);
-        face2.push(hexvec + end_loc);
-        hexvec =
-            (Matrix4::from_axis_angle(vec.normalize(), Deg(60.0)) * hexvec.extend(1.0)).truncate();
-    }
-
-    let mut vertex_list: Vec<Vertex> = Vec::with_capacity(18);
-    for i in 0..6 {
-        vertex_list.push(Vertex {
-            loc: face1[i].into(),
-            color: color1,
-        });
-        //push next in line
-        vertex_list.push(Vertex {
-            loc: face1[(i + 1) % 6].into(),
-            color: color1,
-        });
-        //push one from top
-        vertex_list.push(Vertex {
-            loc: face2[i].into(),
-            color: color2,
-        });
-    }
-    for i in 0..6 {
-        vertex_list.push(Vertex {
-            loc: face2[i].into(),
-            color: color2,
-        });
-        //push next in line
-        vertex_list.push(Vertex {
-            loc: face2[(i + 1) % 6].into(),
-            color: color2,
-        });
-        //push one from top
-        vertex_list.push(Vertex {
-            loc: face1[(i + 1) % 6].into(),
-            color: color1,
-        });
-    }
-    vertex_list
-}
-
-/// Returns the delta logistic growth
-fn logisticDelta(current: f32, max: f32, scale: f32) -> f32 {
-    current * (max - current) * scale
-}
-
-fn leafgen(
-    source_loc: Vector3<f32>,
-    end_loc: Vector3<f32>,
-    up: Vector3<f32>,
-    width: f32,
-    color1: [f32; 3],
-    color2: [f32; 3],
-) -> Vec<Vertex> {
-    let mut vertex_list: Vec<Vertex> = Vec::new();
-
-    // The vector between the source and end
-    let vec = end_loc - source_loc;
-    // This is the horizontal part of the leaf
-    let perpvec = vec.cross(up).normalize() * (width / 2.0);
-
-    let point1 = source_loc - perpvec;
-    let point2 = source_loc + perpvec;
-    let point3 = end_loc - perpvec;
-    let point4 = end_loc + perpvec;
-
-    //push first triangle
-    vertex_list.push(Vertex {
-        loc: point1.into(),
-        color: color1,
-    });
-    vertex_list.push(Vertex {
-        loc: point2.into(),
-        color: color1,
-    });
-    vertex_list.push(Vertex {
-        loc: point3.into(),
-        color: color2,
-    });
-
-    //push second triangle
-    vertex_list.push(Vertex {
-        loc: point3.into(),
-        color: color2,
-    });
-    vertex_list.push(Vertex {
-        loc: point4.into(),
-        color: color2,
-    });
-    vertex_list.push(Vertex {
-        loc: point2.into(),
-        color: color1,
-    });
-
-    vertex_list
-}
-
 impl PlantBuffer {
     pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::PlantMetadata>> {
         CpuAccessibleBuffer::from_data(
@@ -154,7 +36,7 @@ impl PlantBuffer {
             BufferUsage::uniform_buffer(),
             ty::PlantMetadata {
                 freePtr: self.free_ptr,
-                plantDataCapacity: self.max_size,
+                dataCapacity: self.max_size,
             },
         )
         .unwrap()
@@ -202,7 +84,7 @@ impl PlantBuffer {
             plant_list: plant_data.iter().map(|&n| Plant::fromgpu(n)).collect(),
             free_stack: plant_freestack.iter().cloned().collect(),
             free_ptr: plant_metadata.freePtr,
-            max_size: plant_metadata.plantDataCapacity,
+            max_size: plant_metadata.dataCapacity,
         }
     }
 
@@ -287,23 +169,26 @@ impl Plant {
     // Plant has some dummy variables and this function makes it easier to create a default instance
     pub fn new() -> Plant {
         Plant {
-            position: [0.0, 0.0, 0.0],
+            status: STATUS_GARBAGE,
+            age: 0,
+            location: [0.0, 0.0, 0.0],
         }
     }
 
     pub fn fromgpu(plant: ty::Plant) -> Plant {
         Plant {
-            status: STATUS_GARBAGE,
-            age: 0,
-            location: [0.0, 0.0, 0.0],
+            status: plant.status,
+            age: plant.age,
+            location: plant.location[0..3].try_into().unwrap(),
         }
     }
 
     pub fn gpu(&self) -> ty::Plant {
         ty::Plant {
-            status: STATUS_GARBAGE,
-            age: 0,
-            location: [0.0, 0.0, 0.0],
+            status: self.status,
+            age: self.age,
+            location: tov(self.location.into()).extend(0.0).into(),
+            _dummy0: [0; 8],
         }
     }
 }

@@ -46,7 +46,9 @@ struct GridCell {
 };
 
 struct Plant {
-  vec4 absolutePositionCache;
+  uint status;
+  uint age;
+  vec4 location;
 };
 
 

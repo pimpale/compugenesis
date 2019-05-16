@@ -3,6 +3,7 @@ use super::serde::{Deserialize, Serialize};
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
 use super::vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use super::vulkano::descriptor::pipeline_layout::PipelineLayout;
 use super::vulkano::device::{Device, DeviceExtensions, Queue};
 use super::vulkano::format::Format;
 use super::vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
@@ -12,7 +13,6 @@ use super::vulkano::instance::debug::{DebugCallback, MessageTypes};
 use super::vulkano::instance::{Instance, PhysicalDevice};
 use super::vulkano::pipeline::ComputePipeline;
 use super::vulkano::pipeline::ComputePipelineAbstract;
-use super::vulkano::pipeline::PipelineLayout;
 use super::vulkano::swapchain;
 use super::vulkano::sync;
 use super::vulkano::sync::FlushError;
@@ -80,12 +80,8 @@ fn run_cycle(
     node_count: u32,
 
     // Pipelines
-    gridupdatenode_pipeline: Arc<
-        ComputePipeline<PipelineLayout<shader::gridupdatenode::Shader::PipelineLayout>>,
-    >,
-    nodeupdatenode_pipeline: Arc<
-        ComputePipeline<PipelineLayout<shader::nodeupdatenode::Shader::PipelineLayout>>,
-    >,
+    gridupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::gridupdatenode::Shader>>>,
+    nodeupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::nodeupdatenode::Shader>>>,
 
     // Grid Data
     grid_data_buffer: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
@@ -210,7 +206,7 @@ fn run_cycle(
         .then_signal_fence_and_flush()
         .unwrap();
 
-    Box::new(future) as Box<_>;
+    Box::new(future) as Box<_>
 }
 
 fn simulate(
