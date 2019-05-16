@@ -80,8 +80,8 @@ fn run_cycle(
     node_count: u32,
 
     // Pipelines
-    gridupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::gridupdatenode::Shader>>>,
-    nodeupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::nodeupdatenode::Shader>>>,
+    gridupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::gridupdatenode::Layout>>>,
+    nodeupdatenode_pipeline: Arc<ComputePipeline<PipelineLayout<shader::nodeupdatenode::Layout>>>,
 
     // Grid Data
     grid_data_buffer: Arc<CpuAccessibleBuffer<[ty::GridCell]>>,
