@@ -27,13 +27,13 @@ struct Node {
   uint parentIndex;
   uint age;
   uint archetypeId;
+  uint plantId;
   uint status;
   bool visible; // visibility during vertex generation
   float length; // Length in meters (used for displacement)
   float radius;   // Radius in square meters (used for photosynthesis + wind)
   float volume; // Volume in cubic meters (used for light calculations)
-  vec3 absolutePositionCache; // Cache of absolute position
-  mat4 transformation; //Transformation from parent node
+  mat4 transformation; // Transformation from parent node
 };
 
 struct GridCell {
@@ -45,14 +45,18 @@ struct GridCell {
   uint plantDensity;
 };
 
-/* END COMMON HEADER */
+struct Plant {
+  uint status;
+  uint age;
+  vec4 location;
+};
+
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-
 layout(binding = 0) uniform NodeMetadata {
-    uint nodeDataCapacity; // Number of nodes that can fit within the buffer
-    uint freePtr; // Index of free stack
+  uint dataCapacity; // Number of nodes that can fit within the buffer
+  uint freePtr; // Index of free stack
 } nodeMetadata;
 
 layout(binding = 1) buffer NodeData {
@@ -69,27 +73,19 @@ layout(binding = 3) buffer GridData {
   GridCell gridCell[];
 } gridData;
 
-uint getGridId(vec3 loc) {
-    uint x =  int(loc.x);
-    uint y =  int(loc.y);
-    uint z =  int(loc.z);
-    return (gridMetadata.ysize*gridMetadata.xsize*z +
-            gridMetadata.xsize*y + 
-            x);
-}
+layout(binding = 4) uniform PlantMetadata {
+  uint dataCapacity; // Number of nodes that can fit within the buffer
+  uint freePtr; // Index of free stack
+} plantMetadata;
+
+layout(binding = 5) buffer PlantData {
+    Plant plants[];
+} plantData;
 
 void main() {
-    uint nid = gl_GlobalInvocationID.x;
-    // Basic checks
-    if(nid < nodeData.nodes.length() 
-        && nodeData.nodes[nid].status != NODE_STATUS_GARBAGE) {
-        Node n = nodeData.nodes[nid];
-        uint gid = getGridId(n.absolutePositionCache);
-        uint vol = int(n.volume*pow(100, 3));
-        atomicAdd(gridData.gridCell[gid].plantDensity, vol);
-        // calculate and subtract moisture from soil moisture
-        // subtract sunlight using plant density
-    }
+    uint id = gl_GlobalInvocationID.x;
 }
+
+/* END COMMON HEADER */
 "
 }

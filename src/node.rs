@@ -6,18 +6,14 @@ use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::archetype::*;
 use super::serde::{Deserialize, Serialize};
-use super::shader::nodeupdategrid;
+use super::shader::header;
+use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
 use std::sync::Arc;
 
-pub const INVALID_INDEX: u32 = std::u32::MAX;
-
-pub const STATUS_GARBAGE: u32 = 0; //Default For Node, signifies that the node is not instantiated
-pub const STATUS_DEAD: u32 = 1; //Node was once alive, but not anymre. It is susceptible to rot
-pub const STATUS_ALIVE: u32 = 2; //Node is currently alive, and could become dead
-pub const STATUS_NEVER_ALIVE: u32 = 3; //Node is not alive, and cannot die
+use super::plant::*;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NodeBuffer {
@@ -147,25 +143,19 @@ fn leafgen(
 }
 
 impl NodeBuffer {
-    pub fn gen_metadata(
-        &self,
-        device: Arc<Device>,
-    ) -> Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>> {
+    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::NodeMetadata>> {
         CpuAccessibleBuffer::from_data(
             device.clone(),
             BufferUsage::uniform_buffer(),
-            nodeupdategrid::ty::NodeMetadata {
+            ty::NodeMetadata {
                 freePtr: self.free_ptr,
-                nodeDataCapacity: self.max_size,
+                dataCapacity: self.max_size,
             },
         )
         .unwrap()
     }
 
-    pub fn gen_data(
-        &self,
-        device: Arc<Device>,
-    ) -> Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>> {
+    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::Node]>> {
         CpuAccessibleBuffer::from_iter(
             device.clone(),
             BufferUsage::all(),
@@ -196,8 +186,8 @@ impl NodeBuffer {
     }
 
     pub fn from_gpu_buffer(
-        metadata: Arc<CpuAccessibleBuffer<nodeupdategrid::ty::NodeMetadata>>,
-        data: Arc<CpuAccessibleBuffer<[nodeupdategrid::ty::Node]>>,
+        metadata: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
+        data: Arc<CpuAccessibleBuffer<[ty::Node]>>,
         freestack: Arc<CpuAccessibleBuffer<[u32]>>,
     ) -> NodeBuffer {
         let node_data = data.read().unwrap();
@@ -207,7 +197,7 @@ impl NodeBuffer {
             node_list: node_data.iter().map(|&n| Node::fromgpu(n)).collect(),
             free_stack: node_freestack.iter().cloned().collect(),
             free_ptr: node_metadata.freePtr,
-            max_size: node_metadata.nodeDataCapacity,
+            max_size: node_metadata.dataCapacity,
         }
     }
 
@@ -256,7 +246,7 @@ impl NodeBuffer {
     }
 
     /// Generates a list of vertexes to be rendered
-    pub fn gen_vertex(&self) -> Vec<Vertex> {
+    pub fn gen_vertex(&self, plant_buffer: &PlantBuffer) -> Vec<Vertex> {
         //Vector to hold all new vertexes
         let mut vertex_list = Vec::new();
 
@@ -266,8 +256,9 @@ impl NodeBuffer {
             // If its a root node
             if node.status != STATUS_GARBAGE && node.parentIndex == INVALID_INDEX {
                 // call gen_node_vertex
+                let plant = plant_buffer.get(node.plantId);
                 vertex_list.append(&mut self.gen_node_vertex(
-                    tov(node.absolutePositionCache),
+                    tov(plant.location),
                     Matrix4::one(),
                     node_index,
                 ));
@@ -470,12 +461,12 @@ pub struct Node {
     pub parentIndex: u32,
     pub age: u32,
     pub archetypeId: u32,
+    pub plantId: u32,
     pub status: u32,
     pub visible: u32,
     pub length: f32,
     pub radius: f32, // also can be width
     pub volume: f32,
-    pub absolutePositionCache: [f32; 3],
     pub transformation: [[f32; 4]; 4],
 }
 
@@ -488,49 +479,48 @@ impl Node {
             parentIndex: INVALID_INDEX,
             age: 0,
             archetypeId: INVALID_ARCHETYPE_INDEX,
+            plantId: INVALID_INDEX,
             status: STATUS_GARBAGE,
             visible: 0,
             length: 0.0,
             radius: 0.0, // also can be width
             volume: 0.0,
-            absolutePositionCache: [0.0, 0.0, 0.0],
             transformation: Matrix4::one().into(),
         }
     }
 
-    pub fn fromgpu(node: nodeupdategrid::ty::Node) -> Node {
+    pub fn fromgpu(node: ty::Node) -> Node {
         Node {
             leftChildIndex: node.leftChildIndex,
             rightChildIndex: node.rightChildIndex,
             parentIndex: node.parentIndex,
             age: node.age,
             archetypeId: node.archetypeId,
+            plantId: node.plantId,
             status: node.status,
             visible: node.visible,
             length: node.length,
             radius: node.radius,
             volume: node.volume,
-            absolutePositionCache: node.absolutePositionCache,
             transformation: node.transformation,
         }
     }
 
-    pub fn gpu(&self) -> nodeupdategrid::ty::Node {
-        nodeupdategrid::ty::Node {
+    pub fn gpu(&self) -> ty::Node {
+        ty::Node {
             leftChildIndex: self.leftChildIndex,
             rightChildIndex: self.rightChildIndex,
             parentIndex: self.parentIndex,
             age: self.age,
             archetypeId: self.archetypeId,
+            plantId: self.plantId,
             status: self.status,
             visible: self.visible,
             length: self.length,
             radius: self.radius,
             volume: self.volume,
-            absolutePositionCache: self.absolutePositionCache,
             transformation: self.transformation,
-            _dummy0: [0; 8],
-            _dummy1: [0; 4],
+            _dummy0: [0; 4],
         }
     }
 }

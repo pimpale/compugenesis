@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate vulkano;
 extern crate cgmath;
 extern crate csv;
 extern crate gio;
@@ -5,7 +7,6 @@ extern crate gtk;
 extern crate rand;
 extern crate serde;
 extern crate serde_json;
-extern crate vulkano;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
@@ -47,20 +48,22 @@ use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEven
 
 mod archetype;
 mod camera;
-mod compute;
 mod grid;
 mod gui;
 mod node;
+mod plant;
 mod shader;
+mod simulate;
 mod util;
 mod vertex;
 
 use archetype::*;
 use camera::*;
-use compute::*;
 use grid::*;
 use gui::*;
 use node::*;
+use plant::*;
+use simulate::*;
 
 fn create_instance() -> (Arc<Instance>, DebugCallback) {
     let instance = {
@@ -137,9 +140,11 @@ fn main() {
         simulation_duration: None, //In cycles
     }));
 
+    /* TODO make gui
     std::thread::spawn(move || {
-        gtk_setup(settings_packet.clone());
+        gtk_run(settings_packet.clone());
     });
+    */
 
     let queue = queues.next().unwrap();
 
@@ -235,23 +240,31 @@ fn main() {
     let sim_y_size: u32 = 10;
     let sim_z_size: u32 = 10;
 
+    let mut plant_buffer = PlantBuffer::new(50);
+    //
     // The maximum node capacity of the node buffer
-    let mut node_buffer = NodeBuffer::new(500);
+    let mut node_buffer = NodeBuffer::new(50);
     for i in 0..5 {
-        let i1 = node_buffer.alloc();
+        let pindex = plant_buffer.alloc();
+        let mut plant = Plant::new();
 
-        let mut n1 = Node::new();
+        plant.location = [0.0, i as f32, 0.0];
+        plant.status = STATUS_ALIVE;
+        plant_buffer.set(pindex, plant);
 
-        n1.status = STATUS_ALIVE;
-        n1.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
-        n1.visible = 1;
-        n1.absolutePositionCache = [0.0, 0.0, 0.0];
-        n1.transformation = Matrix4::from_angle_z(Rad(std::f32::consts::PI)).into();
-        n1.length = 0.05;
-        n1.radius = 0.01;
-        n1.volume = 0.1;
+        let nindex = node_buffer.alloc();
 
-        node_buffer.set(i1, n1);
+        let mut node = Node::new();
+
+        node.status = STATUS_ALIVE;
+        node.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
+        node.visible = 1;
+        node.plantId = pindex;
+        node.length = 0.05;
+        node.radius = 0.01;
+        node.volume = 0.1;
+
+        node_buffer.set(nindex, node);
     }
     let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
 
@@ -295,7 +308,7 @@ fn main() {
 
         node_buffer.update_all();
         let vertex_buffer = {
-            let mut vecs = node_buffer.gen_vertex();
+            let mut vecs = node_buffer.gen_vertex(&plant_buffer);
             vecs.append(&mut grid_buffer.gen_vertex());
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), vecs.iter().cloned())
                 .unwrap()
@@ -429,24 +442,10 @@ fn main() {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct SimulationState {
-    node_buffer: NodeBuffer,
-    grid_buffer: GridBuffer,
-}
-
-fn serialize_to_path<P: AsRef<Path>>(
-    path: P,
-    node_buffer: NodeBuffer,
-    grid_buffer: GridBuffer,
-) -> Result<(), Box<Error>> {
+fn serialize_to_path<P: AsRef<Path>>(path: P, state: SimulationState) -> Result<(), Box<Error>> {
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
-    let sim_data = SimulationState {
-        node_buffer: node_buffer,
-        grid_buffer: grid_buffer,
-    };
-    let res = serde_json::to_writer(writer, &sim_data)?;
+    let res = serde_json::to_writer(writer, &state)?;
     Ok(res)
 }
 
