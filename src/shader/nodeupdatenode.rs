@@ -50,26 +50,26 @@ struct GridCell {
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 
-layout(binding = 0) uniform NodeMetadata {
+layout(set = 0, binding = 0) uniform NodeMetadata {
     uint freePtr; // Index of free stack
     uint nodeDataCapacity; // Number of nodes that can fit within the buffer
 } nodeMetadata;
 
-layout(binding = 1) buffer NodeData {
+layout(set = 0, binding = 1) buffer NodeData {
   Node nodes[];
 } nodeData;
 
-layout(binding = 2) buffer NodeFreeStack {
+layout(set = 0, binding = 2) buffer NodeFreeStack {
     uint freeStack[];
 } nodeFreeStack;
 
-layout(binding = 3) uniform GridMetadata {
+layout(set = 0, binding = 3) uniform GridMetadata {
   uint xsize;
   uint ysize;
   uint zsize;
 } gridMetadata;
 
-layout(binding = 4) buffer GridData {
+layout(set = 0, binding = 4) buffer GridData {
   GridCell gridCell[];
 } gridData;
 

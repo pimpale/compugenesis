@@ -293,7 +293,28 @@ fn main() {
             }
         }
     }
-    //
+
+    let sim_state = SimulationState {
+        node_buffer: node_buffer.clone(),
+        grid_buffer: grid_buffer.clone(),
+        plant_buffer: plant_buffer.clone(),
+    };
+
+    let sim_control = Arc::new(RwLock::new(Control::new()));
+
+    simulation_run(sim_state, sim_control, queue, device);
+    return;
+    // Spawn work thread
+    {
+        let sim_state = sim_state.clone();
+        let sim_control = sim_control.clone();
+        let queue = queue.clone();
+        let device = device.clone();
+
+        std::thread::spawn(move || {
+            simulation_run(sim_state, sim_control, queue, device);
+        });
+    }
 
     let mut recreate_swapchain = false;
 

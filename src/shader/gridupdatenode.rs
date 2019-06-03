@@ -30,25 +30,44 @@ struct GridCell {
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-
-layout(binding = 0) uniform NodeMetadata {
-    uint nodeDataCount;
-    uint nodeDataCapacity;
-} nodeMetadata;
-
-layout(binding = 1) buffer NodeBuffer { 
-    Node nodes[]; 
-} nodeData;
-
-layout(binding = 2) uniform GridMetadata {
+layout(set = 0, binding = 2) uniform GridMetadataRead {
     uint xsize;
     uint ysize;
     uint zsize;
-} gridMetadata;
+} gridMetadataRead;
 
-layout(binding = 3) buffer GridBuffer { 
+layout(set = 0, binding = 2) uniform GridMetadataWrite {
+    uint xsize;
+    uint ysize;
+    uint zsize;
+} gridMetadataWrite;
+
+layout(set = 0, binding = 3) buffer GridBufferRead { 
     GridCell gridCell[]; 
-} gridData;
+} gridDataRead;
+
+layout(set = 0, binding = 3) buffer GridBufferWrite { 
+    GridCell gridCell[]; 
+} gridDataWrite;
+
+layout(set = 0, binding = 0) uniform NodeMetadataRead {
+    uint nodeDataCount;
+    uint nodeDataCapacity;
+} nodeMetadataRead;
+
+layout(set = 0, binding = 0) uniform NodeMetadataWrite {
+    uint nodeDataCount;
+    uint nodeDataCapacity;
+} nodeMetadataWrite;
+
+layout(set = 0, binding = 1) buffer NodeBufferRead { 
+    Node nodes[]; 
+} nodeDataWrite;
+
+layout(set = 0, binding = 1) buffer NodeBuffer { 
+    Node nodes[]; 
+} nodeData;
+
 
 uint getGridCellId(uint x, uint y, uint z) {
     return (gridMetadata.xsize * gridMetadata.ysize * z +
