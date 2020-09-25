@@ -30,9 +30,9 @@ use super::shader::header::ty;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimulationState {
-    node_buffer: node::NodeBuffer,
-    grid_buffer: grid::GridBuffer,
-    plant_buffer: plant::PlantBuffer,
+    pub node_buffer: node::NodeBuffer,
+    pub grid_buffer: grid::GridBuffer,
+    pub plant_buffer: plant::PlantBuffer,
 }
 
 #[derive(Clone)]
@@ -132,10 +132,14 @@ fn run_cycle(
             .unwrap()
             .add_buffer(node_data_buffer.clone())
             .unwrap()
+            .add_buffer(node_freestack_buffer.clone())
+            .unwrap()
             // Write Node
             .add_buffer(node_metadata_buffer_alt.clone())
             .unwrap()
             .add_buffer(node_data_buffer_alt.clone())
+            .unwrap()
+            .add_buffer(node_freestack_buffer_alt.clone())
             .unwrap()
             // Build
             .build()
@@ -209,7 +213,7 @@ fn run_cycle(
     Box::new(future) as Box<_>
 }
 
-fn simulate(
+pub fn simulation_run(
     state: SimulationState,
     control: Arc<RwLock<Control>>,
     queue: Arc<Queue>,

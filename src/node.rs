@@ -26,10 +26,11 @@ pub struct NodeBuffer {
 fn perpendicular_vector(vec: Vector3<f32>) -> Vector3<f32> {
     // The cross product with itself will be zero, so we have 2 options
     if vec == Vector3::unit_x() {
-        vec.cross(Vector3::unit_y()).normalize()
+        vec.cross(Vector3::unit_y())
     } else {
-        vec.cross(Vector3::unit_x()).normalize()
+        vec.cross(Vector3::unit_x())
     }
+    .normalize()
 }
 
 fn cylgen(
