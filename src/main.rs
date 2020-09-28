@@ -2,518 +2,469 @@
 extern crate vulkano;
 extern crate cgmath;
 extern crate csv;
-extern crate gio;
-extern crate gtk;
 extern crate rand;
-extern crate serde;
-extern crate serde_json;
 extern crate vulkano_shaders;
 extern crate vulkano_win;
 extern crate winit;
 
-use cgmath::{Deg, Matrix3, Matrix4, Point3, Rad, Vector3};
-use serde::{Deserialize, Serialize};
-use std::error::Error;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::path::Path;
+use cgmath::Point3;
 use std::sync::Arc;
-use std::sync::RwLock;
-use std::thread;
-use std::time::Duration;
-use std::time::Instant;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, DeviceExtensions};
-use vulkano::format::Format;
+use vulkano::format::*;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 use vulkano::image::attachment::AttachmentImage;
-use vulkano::image::SwapchainImage;
-use vulkano::instance::debug::{DebugCallback, MessageTypes};
+use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::ComputePipeline;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
+  AcquireError, ColorSpace, FullscreenExclusive, PresentMode, SurfaceTransform, Swapchain,
+  SwapchainCreationError,
 };
 use vulkano::sync;
-use vulkano::sync::FlushError;
-use vulkano::sync::GpuFuture;
+use vulkano::sync::{FlushError, GpuFuture};
+
 use vulkano_win::VkSurfaceBuild;
-use winit::{Event, EventsLoop, VirtualKeyCode, Window, WindowBuilder, WindowEvent};
+use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::{Window, WindowBuilder};
 
 mod archetype;
 mod camera;
 mod grid;
-mod gui;
 mod node;
 mod plant;
 mod shader;
-mod simulate;
 mod util;
 mod vertex;
 
 use archetype::*;
 use camera::*;
 use grid::*;
-use gui::*;
 use node::*;
 use plant::*;
-use simulate::*;
-
-fn create_instance() -> (Arc<Instance>, DebugCallback) {
-    let instance = {
-        let mut extensions = vulkano_win::required_extensions();
-        extensions.ext_debug_report = true;
-        Instance::new(
-            None,
-            &extensions,
-            vec!["VK_LAYER_LUNARG_standard_validation"],
-        )
-        .unwrap()
-    };
-
-    let debug_callback = DebugCallback::new(
-        &instance,
-        MessageTypes {
-            error: true,
-            warning: true,
-            performance_warning: false,
-            information: false,
-            debug: false,
-        },
-        |msg| {
-            println!("validation layer: {:?}", msg.description);
-        },
-    )
-    .unwrap();
-    return (instance, debug_callback);
-}
 
 fn main() {
-    let (instance, _debug_callback) = create_instance();
-    //Choose the first available Device
-    let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
+  let required_extensions = vulkano_win::required_extensions();
 
-    //Print some info about the device currently being used
-    println!(
-        "Using device: {} (type: {:?})",
-        physical.name(),
-        physical.ty()
-    );
+  let instance = Instance::new(None, &required_extensions, None).unwrap();
 
-    let mut events_loop = EventsLoop::new();
-    let surface = WindowBuilder::new()
-        .build_vk_surface(&events_loop, instance.clone())
-        .unwrap();
-    let window = surface.window();
+  //Choose the first available Device
+  let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
 
-    let queue_family = physical
-        .queue_families()
-        .find(|&q| {
-            q.supports_graphics()
-                && q.supports_compute()
-                && surface.is_supported(q).unwrap_or(false)
-        })
-        .unwrap();
+  //Print some info about the device currently being used
+  println!(
+    "Using device: {} (type: {:?})",
+    physical.name(),
+    physical.ty()
+  );
 
-    let device_ext = DeviceExtensions {
-        khr_swapchain: true,
-        ..DeviceExtensions::none()
-    };
-    let (device, mut queues) = Device::new(
-        physical,
-        physical.supported_features(),
-        &device_ext,
-        [(queue_family, 0.5)].iter().cloned(),
-    )
+  let event_loop = EventLoop::new();
+  let surface = WindowBuilder::new()
+    .build_vk_surface(&event_loop, instance.clone())
     .unwrap();
 
-    let settings_packet = Arc::new(RwLock::new(gui::SettingsPacket {
-        paused: true,
-        request_stop: false,
-        requested_fps: None,
-        simulation_duration: None, //In cycles
-    }));
+  let window = surface.window();
 
-    /* TODO make gui
-    std::thread::spawn(move || {
-        gtk_run(settings_packet.clone());
-    });
-    */
+  let queue_family = physical
+    .queue_families()
+    .find(|&q| {
+      q.supports_graphics() && q.supports_compute() && surface.is_supported(q).unwrap_or(false)
+    })
+    .unwrap();
 
-    let queue = queues.next().unwrap();
+  let device_ext = DeviceExtensions {
+    khr_swapchain: true,
+    ..DeviceExtensions::none()
+  };
 
-    let (mut swapchain, images) = {
-        let caps = surface.capabilities(physical).unwrap();
-        let usage = caps.supported_usage_flags;
-        let alpha = caps.supported_composite_alpha.iter().next().unwrap();
-        let format = caps.supported_formats[0].0;
-        let initial_dimensions = if let Some(dimensions) = window.get_inner_size() {
-            let dimensions: (u32, u32) = dimensions.to_physical(window.get_hidpi_factor()).into();
-            [dimensions.0, dimensions.1]
-        } else {
-            return;
-        };
+  let (device, mut queues) = Device::new(
+    physical,
+    physical.supported_features(),
+    &device_ext,
+    [(queue_family, 0.5)].iter().cloned(),
+  )
+  .unwrap();
 
-        Swapchain::new(
-            device.clone(),
-            surface.clone(),
-            caps.min_image_count,
-            format,
-            initial_dimensions,
-            1,
-            usage,
-            &queue,
-            SurfaceTransform::Identity,
-            alpha,
-            PresentMode::Fifo,
-            true,
-            None,
-        )
-        .unwrap()
-    };
+  let queue = queues.next().unwrap();
 
-    let vs = shader::vert::Shader::load(device.clone()).unwrap();
-    let fs = shader::frag::Shader::load(device.clone()).unwrap();
+  let (mut swapchain, images) = {
+    let caps = surface.capabilities(physical).unwrap();
 
-    let render_pass = Arc::new(
-        vulkano::single_pass_renderpass!(device.clone(),
-            attachments: {
-                color: {
-                    load: Clear,
-                    store: Store,
-                    format: swapchain.format(),
-                    samples: 1,
-                },
-                depth: {
-                    load: Clear,
-                    store: DontCare,
-                    format: Format::D16Unorm,
-                    samples: 1,
-                }
+    let alpha = caps.supported_composite_alpha.iter().next().unwrap();
+
+    let format = caps.supported_formats[0].0;
+
+    let dimensions: [u32; 2] = surface.window().inner_size().into();
+
+    // Please take a look at the docs for the meaning of the parameters we didn't mention.
+    Swapchain::new(
+      device.clone(),
+      surface.clone(),
+      caps.min_image_count,
+      format,
+      dimensions,
+      1,
+      ImageUsage::color_attachment(),
+      &queue,
+      SurfaceTransform::Identity,
+      alpha,
+      PresentMode::Fifo,
+      FullscreenExclusive::Default,
+      true,
+      ColorSpace::SrgbNonLinear,
+    )
+    .unwrap()
+  };
+
+  let vs = shader::vert::Shader::load(device.clone()).unwrap();
+  let fs = shader::frag::Shader::load(device.clone()).unwrap();
+
+  let render_pass = Arc::new(
+    vulkano::single_pass_renderpass!(device.clone(),
+        attachments: {
+            color: {
+                load: Clear,
+                store: Store,
+                format: swapchain.format(),
+                samples: 1,
             },
-            pass: {
-                color: [color],
-                depth_stencil: {depth}
+            depth: {
+                load: Clear,
+                store: DontCare,
+                format: Format::D16Unorm,
+                samples: 1,
             }
-        )
-        .unwrap(),
-    );
-
-    let graphics_pipeline = Arc::new(
-        GraphicsPipeline::start()
-            .vertex_input_single_buffer()
-            .vertex_shader(vs.main_entry_point(), ())
-            .triangle_list()
-            .viewports_dynamic_scissors_irrelevant(1)
-            .fragment_shader(fs.main_entry_point(), ())
-            .depth_stencil_simple_depth()
-            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-            .build(device.clone())
-            .unwrap(),
-    );
-
-    let mut dynamic_state = DynamicState {
-        line_width: None,
-        viewports: None,
-        scissors: None,
-    };
-
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
-    let mut framebuffers = window_size_dependent_setup(
-        device.clone(),
-        &images,
-        render_pass.clone(),
-        &mut dynamic_state,
-        &mut camera,
-    );
-
-    //Compute stuff
-
-    // The 3d size of the simulation in meters
-    let sim_x_size: u32 = 10;
-    let sim_y_size: u32 = 10;
-    let sim_z_size: u32 = 10;
-
-    let mut plant_buffer = PlantBuffer::new(50);
-    //
-    // The maximum node capacity of the node buffer
-    let mut node_buffer = NodeBuffer::new(50);
-    for i in 0..5 {
-        let pindex = plant_buffer.alloc();
-        let mut plant = Plant::new();
-
-        plant.location = [0.0, i as f32, 0.0];
-        plant.status = STATUS_ALIVE;
-        plant_buffer.set(pindex, plant);
-
-        let nindex = node_buffer.alloc();
-
-        let mut node = Node::new();
-
-        node.status = STATUS_ALIVE;
-        node.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
-        node.visible = 1;
-        node.plantId = pindex;
-        node.length = 0.05;
-        node.radius = 0.01;
-        node.volume = 0.1;
-
-        node_buffer.set(nindex, node);
-    }
-    let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
-
-    for x in 0..sim_x_size {
-        for z in 0..sim_y_size {
-            let height = ((sim_y_size as f32) * rand::random::<f32>()) as u32;
-            for y in 0..sim_z_size {
-                grid_buffer.set(
-                    x,
-                    y,
-                    z,
-                    GridCell {
-                        //Initialize the array to be filled with dirt halfway
-                        typeCode: if y > height {
-                            grid::GRIDCELL_TYPE_AIR
-                        } else {
-                            grid::GRIDCELL_TYPE_SOIL
-                        },
-                        temperature: 0,
-                        moisture: 0,
-                        sunlight: 0,
-                        gravity: 0,
-                        plantDensity: 0,
-                    },
-                );
-            }
+        },
+        pass: {
+            color: [color],
+            depth_stencil: {depth}
         }
+    )
+    .unwrap(),
+  );
+
+  let graphics_pipeline = Arc::new(
+    GraphicsPipeline::start()
+      .vertex_input_single_buffer()
+      .vertex_shader(vs.main_entry_point(), ())
+      .triangle_list()
+      .viewports_dynamic_scissors_irrelevant(1)
+      .fragment_shader(fs.main_entry_point(), ())
+      .depth_stencil_simple_depth()
+      .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+      .build(device.clone())
+      .unwrap(),
+  );
+
+  let mut dynamic_state = DynamicState {
+    line_width: None,
+    viewports: None,
+    scissors: None,
+    compare_mask: None,
+    write_mask: None,
+    reference: None,
+  };
+
+  let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
+
+  let mut framebuffers = window_size_dependent_setup(
+    device.clone(),
+    &images,
+    render_pass.clone(),
+    &mut dynamic_state,
+    &mut camera,
+  );
+
+  //Compute stuff
+
+  // The 3d size of the simulation in meters
+  let sim_x_size: u32 = 10;
+  let sim_y_size: u32 = 10;
+  let sim_z_size: u32 = 10;
+
+  let mut plant_buffer = PlantBuffer::new(50);
+  //
+  // The maximum node capacity of the node buffer
+  let mut node_buffer = NodeBuffer::new(50);
+  for i in 0..5 {
+    let pindex = plant_buffer.alloc();
+    let mut plant = Plant::new();
+
+    plant.location = [0.0, i as f32, 0.0];
+    plant.status = STATUS_ALIVE;
+    plant_buffer.set(pindex, plant);
+
+    let nindex = node_buffer.alloc();
+
+    let mut node = Node::new();
+
+    node.status = STATUS_ALIVE;
+    node.archetypeId = GROWING_BUD_ARCHETYPE_INDEX;
+    node.visible = 1;
+    node.plantId = pindex;
+    node.length = 0.05;
+    node.radius = 0.01;
+    node.volume = 0.1;
+
+    node_buffer.set(nindex, node);
+  }
+  let mut grid_buffer = GridBuffer::new(sim_x_size, sim_y_size, sim_z_size);
+
+  for x in 0..sim_x_size {
+    for z in 0..sim_y_size {
+      let height = ((sim_y_size as f32) * rand::random::<f32>()) as u32;
+      for y in 0..sim_z_size {
+        grid_buffer.set(
+          x,
+          y,
+          z,
+          GridCell {
+            //Initialize the array to be filled with dirt halfway
+            typeCode: if y > height {
+              grid::GRIDCELL_TYPE_AIR
+            } else {
+              grid::GRIDCELL_TYPE_SOIL
+            },
+            temperature: 0,
+            moisture: 0,
+            sunlight: 0,
+            gravity: 0,
+            plantDensity: 0,
+          },
+        );
+      }
     }
+  }
 
-    let sim_state = SimulationState {
-        node_buffer: node_buffer.clone(),
-        grid_buffer: grid_buffer.clone(),
-        plant_buffer: plant_buffer.clone(),
-    };
+  let mut recreate_swapchain = false;
 
-    let sim_control = Arc::new(RwLock::new(Control::new()));
+  let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
-    simulation_run(sim_state, sim_control, queue, device);
-    return;
-    // Spawn work thread
-    {
-        let sim_state = sim_state.clone();
-        let sim_control = sim_control.clone();
-        let queue = queue.clone();
-        let device = device.clone();
+  event_loop.run(move |event, _, control_flow| {
+    match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => {
+        *control_flow = ControlFlow::Exit;
+      }
+      Event::WindowEvent {
+        event: WindowEvent::Resized(_),
+        ..
+      } => {
+        recreate_swapchain = true;
+      }
+      Event::WindowEvent {
+        event: WindowEvent::KeyboardInput { input, .. },
+        ..
+      } => {
+        if let Some(kc) = input.virtual_keycode {
+          match kc {
+            VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Forward),
+            VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
+            VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
+            VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
+            VirtualKeyCode::Q => camera.dir_move(CameraMovementDir::Upward),
+            VirtualKeyCode::E => camera.dir_move(CameraMovementDir::Downward),
 
-        std::thread::spawn(move || {
-            simulation_run(sim_state, sim_control, queue, device);
-        });
-    }
-
-    let mut recreate_swapchain = false;
-
-    let mut previous_frame_end = Box::new(sync::now(device.clone())) as Box<GpuFuture>;
-
-    loop {
-        // Add delay
-        // thread::sleep(Duration::from_millis(40));
-        // Graphics
-
-        previous_frame_end.cleanup_finished();
-
+            VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
+            VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
+            VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),
+            VirtualKeyCode::Right => camera.dir_rotate(CameraRotationDir::Right),
+            VirtualKeyCode::PageUp => camera.dir_rotate(CameraRotationDir::Clockwise),
+            VirtualKeyCode::PageDown => camera.dir_rotate(CameraRotationDir::Counterclockwise),
+            _ => (),
+          }
+        }
+      }
+      Event::RedrawEventsCleared => {
         node_buffer.update_all();
         let vertex_buffer = {
-            let mut vecs = node_buffer.gen_vertex(&plant_buffer);
-            vecs.append(&mut grid_buffer.gen_vertex());
-            CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), vecs.iter().cloned())
-                .unwrap()
+          let mut vecs = node_buffer.gen_vertex(&plant_buffer);
+          vecs.append(&mut grid_buffer.gen_vertex());
+          CpuAccessibleBuffer::from_iter(
+            device.clone(),
+            BufferUsage::all(),
+            false,
+            vecs.iter().cloned(),
+          )
+          .unwrap()
         };
 
+        // free memory
+        previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        // Whenever the window resizes we need to recreate everything dependent on the window size.
+        // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
         if recreate_swapchain {
-            let dimensions = if let Some(dimensions) = window.get_inner_size() {
-                let dimensions: (u32, u32) =
-                    dimensions.to_physical(window.get_hidpi_factor()).into();
-                [dimensions.0, dimensions.1]
-            } else {
-                return;
-            };
+          // Get the new dimensions of the window.
+          let dimensions: [u32; 2] = surface.window().inner_size().into();
+          let (new_swapchain, new_images) = match swapchain.recreate_with_dimensions(dimensions) {
+            Ok(r) => r,
+            // This error tends to happen when the user is manually resizing the window.
+            // Simply restarting the loop is the easiest way to fix this issue.
+            Err(SwapchainCreationError::UnsupportedDimensions) => return,
+            Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
+          };
 
-            let (new_swapchain, new_images) = match swapchain.recreate_with_dimension(dimensions) {
-                Ok(r) => r,
-                Err(SwapchainCreationError::UnsupportedDimensions) => continue,
-                Err(err) => panic!("{:?}", err),
-            };
-
-            swapchain = new_swapchain;
-            framebuffers = window_size_dependent_setup(
-                device.clone(),
-                &new_images,
-                render_pass.clone(),
-                &mut dynamic_state,
-                &mut camera,
-            );
-
-            recreate_swapchain = false;
+          swapchain = new_swapchain;
+          // Because framebuffers contains an Arc on the old swapchain, we need to
+          // recreate framebuffers as well.
+          framebuffers = window_size_dependent_setup(
+            device.clone(),
+            &new_images,
+            render_pass.clone(),
+            &mut dynamic_state,
+            &mut camera,
+          );
+          recreate_swapchain = false;
         }
 
-        let (image_num, acquire_future) =
-            match swapchain::acquire_next_image(swapchain.clone(), None) {
-                Ok(r) => r,
-                Err(AcquireError::OutOfDate) => {
-                    recreate_swapchain = true;
-                    continue;
-                }
-                Err(err) => panic!("{:?}", err),
-            };
+        // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
+        // no image is available (which happens if you submit draw commands too quickly), then the
+        // function will block.
+        // This operation returns the index of the image that we are allowed to draw upon.
+        //
+        // This function can block if no image is available. The parameter is an optional timeout
+        // after which the function call will return an error.
+        let (image_num, suboptimal, acquire_future) =
+          match swapchain::acquire_next_image(swapchain.clone(), None) {
+            Ok(r) => r,
+            Err(AcquireError::OutOfDate) => {
+              recreate_swapchain = true;
+              return;
+            }
+            Err(e) => panic!("Failed to acquire next image: {:?}", e),
+          };
 
-        let command_buffer =
-            AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
-                .unwrap()
-                .begin_render_pass(
-                    framebuffers[image_num].clone(),
-                    false,
-                    // Sky blue
-                    vec![[0.53, 0.81, 0.92, 1.0].into(), 1f32.into()],
-                )
-                .unwrap()
-                .draw(
-                    graphics_pipeline.clone(),
-                    &dynamic_state,
-                    vertex_buffer.clone(),
-                    (),
-                    shader::vert::ty::PushConstantData {
-                        mvp: camera.mvp().into(),
-                    },
-                )
-                .unwrap()
-                .end_render_pass()
-                .unwrap()
-                .build()
-                .unwrap();
+        // acquire_next_image can be successful, but suboptimal. This means that the swapchain image
+        // will still work, but it may not display correctly. With some drivers this can be when
+        // the window resizes, but it may not cause the swapchain to become out of date.
+        if suboptimal {
+          recreate_swapchain = true;
+        }
+
+        // In order to draw, we have to build a *command buffer*. The command buffer object holds
+        // the list of commands that are going to be executed.
+        //
+        // Building a command buffer is an expensive operation (usually a few hundred
+        // microseconds), but it is known to be a hot path in the driver and is expected to be
+        // optimized.
+        //
+        // Note that we have to pass a queue family when we create the command buffer. The command
+        // buffer will only be executable on that given queue family.
+        let mut builder =
+          AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
+            .unwrap();
+
+        builder
+          // Before we can draw, we have to *enter a render pass*. There are two methods to do
+          // this: `draw_inline` and `draw_secondary`. The latter is a bit more advanced and is
+          // not covered here.
+          //
+          // The third parameter builds the list of values to clear the attachments with. The API
+          // is similar to the list of attachments when building the framebuffers, except that
+          // only the attachments that use `load: Clear` appear in the list.
+          .begin_render_pass(
+            framebuffers[image_num].clone(),
+            false,
+            vec![[0.53, 0.81, 0.92, 1.0].into(), 1f32.into()],
+          )
+          .unwrap()
+          // We are now inside the first subpass of the render pass. We add a draw command.
+          //
+          // The last two parameters contain the list of resources to pass to the shaders.
+          // Since we used an `EmptyPipeline` object, the objects have to be `()`.
+          .draw(
+            graphics_pipeline.clone(),
+            &dynamic_state,
+            vertex_buffer,
+            (),
+             shader::vert::ty::PushConstantData {
+               mvp: camera.mvp().into(),
+             },
+          )
+          .unwrap()
+          // We leave the render pass by calling `draw_end`. Note that if we had multiple
+          // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
+          // next subpass.
+          .end_render_pass()
+          .unwrap();
+
+        // Finish building the command buffer by calling `build`.
+        let command_buffer = builder.build().unwrap();
 
         let future = previous_frame_end
-            .join(acquire_future)
-            .then_execute(queue.clone(), command_buffer)
-            .unwrap()
-            .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
-            .then_signal_fence_and_flush();
+          .take()
+          .unwrap()
+          .join(acquire_future)
+          .then_execute(queue.clone(), command_buffer)
+          .unwrap()
+          // The color output is now expected to contain our triangle. But in order to show it on
+          // the screen, we have to *present* the image by calling `present`.
+          //
+          // This function does not actually present the image immediately. Instead it submits a
+          // present command at the end of the queue. This means that it will only be presented once
+          // the GPU has finished executing the command buffer that draws the triangle.
+          .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+          .then_signal_fence_and_flush();
 
         match future {
-            Ok(future) => {
-                previous_frame_end = Box::new(future) as Box<_>;
-            }
-            Err(FlushError::OutOfDate) => {
-                recreate_swapchain = true;
-                previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-            }
-            Err(e) => {
-                println!("{:?}", e);
-                previous_frame_end = Box::new(sync::now(device.clone())) as Box<_>;
-            }
+          Ok(future) => {
+            previous_frame_end = Some(future.boxed());
+          }
+          Err(FlushError::OutOfDate) => {
+            recreate_swapchain = true;
+            previous_frame_end = Some(sync::now(device.clone()).boxed());
+          }
+          Err(e) => {
+            println!("Failed to flush future: {:?}", e);
+            previous_frame_end = Some(sync::now(device.clone()).boxed());
+          }
         }
-
-        let mut done = false;
-        events_loop.poll_events(|ev| match ev {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => done = true,
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_),
-                ..
-            } => recreate_swapchain = true,
-            Event::WindowEvent {
-                event: WindowEvent::KeyboardInput { device_id, input },
-                ..
-            } => {
-                let _ = device_id;
-                let kc = input.virtual_keycode;
-                if kc.is_some() {
-                    match kc.unwrap() {
-                        VirtualKeyCode::W => camera.dir_move(CameraMovementDir::Forward),
-                        VirtualKeyCode::A => camera.dir_move(CameraMovementDir::Left),
-                        VirtualKeyCode::S => camera.dir_move(CameraMovementDir::Backward),
-                        VirtualKeyCode::D => camera.dir_move(CameraMovementDir::Right),
-                        VirtualKeyCode::Q => camera.dir_move(CameraMovementDir::Upward),
-                        VirtualKeyCode::E => camera.dir_move(CameraMovementDir::Downward),
-
-                        VirtualKeyCode::Up => camera.dir_rotate(CameraRotationDir::Upward),
-                        VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
-                        VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),
-                        VirtualKeyCode::Right => camera.dir_rotate(CameraRotationDir::Right),
-                        VirtualKeyCode::PageUp => camera.dir_rotate(CameraRotationDir::Clockwise),
-                        VirtualKeyCode::PageDown => {
-                            camera.dir_rotate(CameraRotationDir::Counterclockwise)
-                        }
-                        _ => (),
-                    }
-                }
-            }
-            _ => (),
-        });
-        if done {
-            return;
-        }
+      }
+      _ => (),
     }
+  });
 }
 
-fn serialize_to_path<P: AsRef<Path>>(path: P, state: SimulationState) -> Result<(), Box<Error>> {
-    let file = File::create(path)?;
-    let writer = BufWriter::new(file);
-    let res = serde_json::to_writer(writer, &state)?;
-    Ok(res)
-}
-
-fn deserialize_from_path<P: AsRef<Path>>(path: P) -> Result<SimulationState, Box<Error>> {
-    // Open the file in read-only mode with buffer.
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-
-    // Read the JSON contents of the file as an instance of `User`.
-    let u = serde_json::from_reader(reader)?;
-
-    // Return the data.
-    Ok(u)
-}
-
+/// This method is called once during initialization, then again whenever the window is resized
 fn window_size_dependent_setup(
-    device: Arc<Device>,
-    images: &[Arc<SwapchainImage<Window>>],
-    render_pass: Arc<RenderPassAbstract + Send + Sync>,
-    dynamic_state: &mut DynamicState,
-    camera: &mut Camera,
-) -> Vec<Arc<FramebufferAbstract + Send + Sync>> {
-    let dimensions = images[0].dimensions();
+  device: Arc<Device>,
+  images: &[Arc<SwapchainImage<Window>>],
+  render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
+  dynamic_state: &mut DynamicState,
+  camera: &mut Camera,
+) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+  let dimensions = images[0].dimensions();
 
-    let viewport = Viewport {
-        origin: [0.0, 0.0],
-        dimensions: [dimensions[0] as f32, dimensions[1] as f32],
-        depth_range: 0.0..1.0,
-    };
-    camera.setscreen(dimensions[0], dimensions[1]);
-    dynamic_state.viewports = Some(vec![viewport]);
+  let viewport = Viewport {
+    origin: [0.0, 0.0],
+    dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+    depth_range: 0.0..1.0,
+  };
+  dynamic_state.viewports = Some(vec![viewport]);
 
-    let depth_buffer =
-        AttachmentImage::transient(device.clone(), dimensions, Format::D16Unorm).unwrap();
+  camera.setscreen(dimensions[0], dimensions[1]);
 
-    images
-        .iter()
-        .map(|image| {
-            Arc::new(
-                Framebuffer::start(render_pass.clone())
-                    .add(image.clone())
-                    .unwrap()
-                    .add(depth_buffer.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap(),
-            ) as Arc<FramebufferAbstract + Send + Sync>
-        })
-        .collect::<Vec<_>>()
+  let depth_buffer = AttachmentImage::transient(device, dimensions, Format::D16Unorm).unwrap();
+
+  images
+    .iter()
+    .map(|image| {
+      Arc::new(
+        Framebuffer::start(render_pass.clone())
+          .add(image.clone())
+          .unwrap()
+          .add(depth_buffer.clone())
+          .unwrap()
+          .build()
+          .unwrap(),
+      ) as Arc<dyn FramebufferAbstract + Send + Sync>
+    })
+    .collect::<Vec<_>>()
 }

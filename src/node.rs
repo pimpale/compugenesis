@@ -5,9 +5,6 @@
 use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::archetype::*;
-use super::serde::{Deserialize, Serialize};
-use super::shader::header;
-use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -15,7 +12,7 @@ use std::sync::Arc;
 
 use super::plant::*;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct NodeBuffer {
     node_list: Vec<Node>,
     free_stack: Vec<u32>,
@@ -37,8 +34,8 @@ fn cylgen(
     source_loc: Vector3<f32>,
     end_loc: Vector3<f32>,
     radius: f32,
-    color1: [f32; 3],
-    color2: [f32; 3],
+    color1: [f32; 4],
+    color2: [f32; 4],
 ) -> Vec<Vertex> {
     let vec = end_loc - source_loc;
     let mut hexvec = perpendicular_vector(vec) * radius;
@@ -97,8 +94,8 @@ fn leafgen(
     end_loc: Vector3<f32>,
     up: Vector3<f32>,
     width: f32,
-    color1: [f32; 3],
-    color2: [f32; 3],
+    color1: [f32; 4],
+    color2: [f32; 4],
 ) -> Vec<Vertex> {
     let mut vertex_list: Vec<Vertex> = Vec::new();
 
@@ -144,35 +141,6 @@ fn leafgen(
 }
 
 impl NodeBuffer {
-    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::NodeMetadata>> {
-        CpuAccessibleBuffer::from_data(
-            device.clone(),
-            BufferUsage::uniform_buffer(),
-            ty::NodeMetadata {
-                freePtr: self.free_ptr,
-                dataCapacity: self.max_size,
-            },
-        )
-        .unwrap()
-    }
-
-    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::Node]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.node_list.to_vec().drain(..).map(|n| n.gpu()),
-        )
-        .unwrap()
-    }
-
-    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.free_stack.to_vec().drain(..),
-        )
-        .unwrap()
-    }
 
     pub fn new(size: u32) -> NodeBuffer {
         if size == 0 || size == INVALID_INDEX {
@@ -183,22 +151,6 @@ impl NodeBuffer {
             free_stack: (0..size).collect(),             // Create list of all free node locations
             free_ptr: size,                              // The current pointer to the active stack
             max_size: size, // The maximum size to which the stack may grow
-        }
-    }
-
-    pub fn from_gpu_buffer(
-        metadata: Arc<CpuAccessibleBuffer<ty::NodeMetadata>>,
-        data: Arc<CpuAccessibleBuffer<[ty::Node]>>,
-        freestack: Arc<CpuAccessibleBuffer<[u32]>>,
-    ) -> NodeBuffer {
-        let node_data = data.read().unwrap();
-        let node_metadata = metadata.read().unwrap();
-        let node_freestack = freestack.read().unwrap();
-        NodeBuffer {
-            node_list: node_data.iter().map(|&n| Node::fromgpu(n)).collect(),
-            free_stack: node_freestack.iter().cloned().collect(),
-            free_ptr: node_metadata.freePtr,
-            max_size: node_metadata.dataCapacity,
         }
     }
 
@@ -220,13 +172,13 @@ impl NodeBuffer {
         }
     }
 
-    pub fn alloc_insert(&mut self, node: Node) -> () {
+    pub fn alloc_insert(&mut self, node: Node) {
         let index = self.alloc();
         self.set(index, node.clone());
     }
 
     /// Marks an index in the array as free to use, marks any node as garbage
-    pub fn free(&mut self, index: u32) -> () {
+    pub fn free(&mut self, index: u32) {
         self.node_list[index as usize].status = STATUS_GARBAGE;
         if self.free_ptr == self.max_size {
             panic!("Free Stack Full (This should not happen)");
@@ -287,16 +239,16 @@ impl NodeBuffer {
                     end_loc,
                     Vector3::unit_y(),
                     node.radius,
-                    [0.0, 1.0, 0.0],
-                    [1.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0, 1.0],
+                    [1.0, 1.0, 0.0, 1.0],
                 ));
             } else {
                 vertex_list.append(&mut cylgen(
                     source_loc,
                     end_loc,
                     node.radius,
-                    [0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0, 1.0],
                 ));
             }
         }
@@ -321,7 +273,7 @@ impl NodeBuffer {
     }
 
     /// Sets the left child of parent to child, and if child is not invalid, sets its parent to the parent
-    pub fn set_left_child(&mut self, parent: u32, child: u32) -> () {
+    pub fn set_left_child(&mut self, parent: u32, child: u32) {
         self.node_list[parent as usize].leftChildIndex = child;
         if child != INVALID_INDEX {
             self.node_list[child as usize].parentIndex = parent;
@@ -329,7 +281,7 @@ impl NodeBuffer {
     }
 
     /// Sets the right child of parent to child, and if child is not invalid, sets its parent to the parent
-    pub fn set_right_child(&mut self, parent: u32, child: u32) -> () {
+    pub fn set_right_child(&mut self, parent: u32, child: u32) {
         self.node_list[parent as usize].rightChildIndex = child;
         if child != INVALID_INDEX {
             self.node_list[child as usize].parentIndex = parent;
@@ -455,7 +407,7 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct Node {
     pub leftChildIndex: u32,
     pub rightChildIndex: u32,
@@ -487,41 +439,6 @@ impl Node {
             radius: 0.0, // also can be width
             volume: 0.0,
             transformation: Matrix4::one().into(),
-        }
-    }
-
-    pub fn fromgpu(node: ty::Node) -> Node {
-        Node {
-            leftChildIndex: node.leftChildIndex,
-            rightChildIndex: node.rightChildIndex,
-            parentIndex: node.parentIndex,
-            age: node.age,
-            archetypeId: node.archetypeId,
-            plantId: node.plantId,
-            status: node.status,
-            visible: node.visible,
-            length: node.length,
-            radius: node.radius,
-            volume: node.volume,
-            transformation: node.transformation,
-        }
-    }
-
-    pub fn gpu(&self) -> ty::Node {
-        ty::Node {
-            leftChildIndex: self.leftChildIndex,
-            rightChildIndex: self.rightChildIndex,
-            parentIndex: self.parentIndex,
-            age: self.age,
-            archetypeId: self.archetypeId,
-            plantId: self.plantId,
-            status: self.status,
-            visible: self.visible,
-            length: self.length,
-            radius: self.radius,
-            volume: self.volume,
-            transformation: self.transformation,
-            _dummy0: [0; 4],
         }
     }
 }

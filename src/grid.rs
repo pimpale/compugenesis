@@ -4,8 +4,6 @@
 #![allow(non_snake_case)]
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
 
-use super::serde::{Deserialize, Serialize};
-use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -17,7 +15,7 @@ pub const GRIDCELL_TYPE_WATER: u32 = 2;
 pub const GRIDCELL_TYPE_STONE: u32 = 3;
 pub const GRIDCELL_TYPE_SOIL: u32 = 4;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct GridBuffer {
     grid_cells: Vec<GridCell>,
     xsize: u32,
@@ -40,9 +38,9 @@ impl GridBuffer {
 
     pub fn new(xsize: u32, ysize: u32, zsize: u32) -> GridBuffer {
         GridBuffer {
-            xsize: xsize,
-            ysize: ysize,
-            zsize: zsize,
+            xsize,
+            ysize,
+            zsize,
             grid_cells: vec![GridCell::new(); (xsize * ysize * zsize) as usize],
         }
     }
@@ -55,7 +53,7 @@ impl GridBuffer {
         self.grid_cells[self.toId(x, y, z)].clone()
     }
 
-    pub fn set(&mut self, x: u32, y: u32, z: u32, cell: GridCell) -> () {
+    pub fn set(&mut self, x: u32, y: u32, z: u32, cell: GridCell) {
         let id = self.toId(x, y, z);
         self.grid_cells[id] = cell.clone();
     }
@@ -67,35 +65,35 @@ impl GridBuffer {
 
         let lbu = Vertex {
             loc: [x as f32, y as f32, z as f32],
-            color: [0.5, 0.9, 0.5],
+            color: [0.5, 0.9, 0.5, 1.0],
         };
         let rbu = Vertex {
             loc: [(x + 1) as f32, y as f32, z as f32],
-            color: [0.5, 0.5, 0.9],
+            color: [0.5, 0.5, 0.9, 1.0],
         };
         let lfu = Vertex {
             loc: [x as f32, y as f32, (z + 1) as f32],
-            color: [0.9, 0.5, 0.5],
+            color: [0.9, 0.5, 0.5, 1.0],
         };
         let rfu = Vertex {
             loc: [(x + 1) as f32, y as f32, (z + 1) as f32],
-            color: [0.5, 0.9, 0.5],
+            color: [0.5, 0.9, 0.5, 1.0],
         };
         let lbl = Vertex {
             loc: [x as f32, (y + 1) as f32, z as f32],
-            color: [0.5, 0.5, 0.9],
+            color: [0.5, 0.5, 0.9, 1.0],
         };
         let rbl = Vertex {
             loc: [(x + 1) as f32, (y + 1) as f32, z as f32],
-            color: [0.9, 0.5, 0.5],
+            color: [0.9, 0.5, 0.5, 1.0],
         };
         let lfl = Vertex {
             loc: [x as f32, (y + 1) as f32, (z + 1) as f32],
-            color: [0.5, 0.5, 0.5],
+            color: [0.5, 0.5, 0.5, 1.0],
         };
         let rfl = Vertex {
             loc: [(x + 1) as f32, (y + 1) as f32, (z + 1) as f32],
-            color: [0.5, 0.5, 0.5],
+            color: [0.5, 0.5, 0.5, 1.0],
         };
 
         vec![
@@ -119,31 +117,9 @@ impl GridBuffer {
         }
         vertex_list
     }
-
-    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::GridMetadata>> {
-        CpuAccessibleBuffer::from_data(
-            device.clone(),
-            BufferUsage::uniform_buffer(),
-            ty::GridMetadata {
-                xsize: self.xsize,
-                ysize: self.ysize,
-                zsize: self.zsize,
-            },
-        )
-        .unwrap()
-    }
-
-    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::GridCell]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.grid_cells.to_vec().drain(..).map(|g| g.gpu()),
-        )
-        .unwrap()
-    }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct GridCell {
     pub typeCode: u32,
     pub temperature: u32,
@@ -165,14 +141,4 @@ impl GridCell {
         }
     }
 
-    pub fn gpu(&self) -> ty::GridCell {
-        ty::GridCell {
-            typeCode: self.typeCode,
-            temperature: self.temperature,
-            moisture: self.moisture,
-            sunlight: self.sunlight,
-            gravity: self.gravity,
-            plantDensity: self.plantDensity,
-        }
-    }
 }

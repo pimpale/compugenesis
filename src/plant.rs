@@ -6,9 +6,6 @@ use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 use std::convert::TryInto;
 
 use super::archetype::*;
-use super::serde::{Deserialize, Serialize};
-use super::shader::header;
-use super::shader::header::ty;
 use super::vertex::Vertex;
 use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use super::vulkano::device::Device;
@@ -21,7 +18,7 @@ pub const STATUS_DEAD: u32 = 1; //Plant was once alive, but not anymre. It is su
 pub const STATUS_ALIVE: u32 = 2; //Plant is currently alive, and could become dead
 pub const STATUS_NEVER_ALIVE: u32 = 3; //Plant is not alive, and cannot die
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct PlantBuffer {
     plant_list: Vec<Plant>,
     free_stack: Vec<u32>,
@@ -30,36 +27,6 @@ pub struct PlantBuffer {
 }
 
 impl PlantBuffer {
-    pub fn gen_metadata(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<ty::PlantMetadata>> {
-        CpuAccessibleBuffer::from_data(
-            device.clone(),
-            BufferUsage::uniform_buffer(),
-            ty::PlantMetadata {
-                freePtr: self.free_ptr,
-                dataCapacity: self.max_size,
-            },
-        )
-        .unwrap()
-    }
-
-    pub fn gen_data(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[ty::Plant]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.plant_list.to_vec().drain(..).map(|n| n.gpu()),
-        )
-        .unwrap()
-    }
-
-    pub fn gen_freestack(&self, device: Arc<Device>) -> Arc<CpuAccessibleBuffer<[u32]>> {
-        CpuAccessibleBuffer::from_iter(
-            device.clone(),
-            BufferUsage::all(),
-            self.free_stack.to_vec().drain(..),
-        )
-        .unwrap()
-    }
-
     pub fn new(size: u32) -> PlantBuffer {
         if size == 0 || size == INVALID_INDEX {
             panic!("invalid size for plant buffer")
@@ -69,22 +36,6 @@ impl PlantBuffer {
             free_stack: (0..size).collect(), // Create list of all free plant locations
             free_ptr: size,                  // The current pointer to the active stack
             max_size: size,                  // The maximum size to which the stack may grow
-        }
-    }
-
-    pub fn from_gpu_buffer(
-        metadata: Arc<CpuAccessibleBuffer<ty::PlantMetadata>>,
-        data: Arc<CpuAccessibleBuffer<[ty::Plant]>>,
-        freestack: Arc<CpuAccessibleBuffer<[u32]>>,
-    ) -> PlantBuffer {
-        let plant_data = data.read().unwrap();
-        let plant_metadata = metadata.read().unwrap();
-        let plant_freestack = freestack.read().unwrap();
-        PlantBuffer {
-            plant_list: plant_data.iter().map(|&n| Plant::fromgpu(n)).collect(),
-            free_stack: plant_freestack.iter().cloned().collect(),
-            free_ptr: plant_metadata.freePtr,
-            max_size: plant_metadata.dataCapacity,
         }
     }
 
@@ -106,13 +57,13 @@ impl PlantBuffer {
         }
     }
 
-    pub fn alloc_insert(&mut self, plant: Plant) -> () {
+    pub fn alloc_insert(&mut self, plant: Plant) {
         let index = self.alloc();
         self.set(index, plant.clone());
     }
 
     /// Marks an index in the array as free to use, marks any plant as garbage
-    pub fn free(&mut self, index: u32) -> () {
+    pub fn free(&mut self, index: u32) {
         self.plant_list[index as usize].status = STATUS_GARBAGE;
         if self.free_ptr == self.max_size {
             panic!("Free Stack Full (This should not happen)");
@@ -158,7 +109,7 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct Plant {
     pub status: u32,
     pub age: u32,
@@ -172,23 +123,6 @@ impl Plant {
             status: STATUS_GARBAGE,
             age: 0,
             location: [0.0, 0.0, 0.0],
-        }
-    }
-
-    pub fn fromgpu(plant: ty::Plant) -> Plant {
-        Plant {
-            status: plant.status,
-            age: plant.age,
-            location: plant.location[0..3].try_into().unwrap(),
-        }
-    }
-
-    pub fn gpu(&self) -> ty::Plant {
-        ty::Plant {
-            status: self.status,
-            age: self.age,
-            location: tov(self.location.into()).extend(0.0).into(),
-            _dummy0: [0; 8],
         }
     }
 }

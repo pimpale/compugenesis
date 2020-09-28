@@ -1,11 +1,3 @@
 //Shader modules for rendering the data
 pub mod frag;
 pub mod vert;
-
-pub mod header;
-
-//Compute shader modules
-pub mod gridupdategrid;
-pub mod gridupdatenode;
-pub mod nodeupdategrid;
-pub mod nodeupdatenode;
