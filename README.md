@@ -1,6 +1,8 @@
 # Compugenesis
 
-CompuGenesis is a simulation framework that uses L-Systems to model plants on the GPU efficiently and accurately. 
+![](assets/demo.png)
+
+CompuGenesis is a simulation framework that uses L-Systems to model plants efficiently and accurately. 
 
 ## Goals:
   * Create a flexible plant simulation and paired microclimate implementation that uses the parallelizable capabilities of a GPU.
