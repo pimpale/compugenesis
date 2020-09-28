@@ -275,8 +275,6 @@ fn main() {
             VirtualKeyCode::Left => camera.dir_rotate(CameraRotationDir::Left),
             VirtualKeyCode::Down => camera.dir_rotate(CameraRotationDir::Downward),
             VirtualKeyCode::Right => camera.dir_rotate(CameraRotationDir::Right),
-            VirtualKeyCode::PageUp => camera.dir_rotate(CameraRotationDir::Clockwise),
-            VirtualKeyCode::PageDown => camera.dir_rotate(CameraRotationDir::Counterclockwise),
             _ => (),
           }
         }
