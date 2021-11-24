@@ -7,8 +7,6 @@ use std::convert::TryInto;
 
 use super::archetype::*;
 use super::vertex::Vertex;
-use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use super::vulkano::device::Device;
 use std::sync::Arc;
 
 pub const INVALID_INDEX: u32 = std::u32::MAX;

@@ -2,12 +2,10 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(non_snake_case)]
-use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
+use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4, One};
 
 use super::archetype::*;
 use super::vertex::Vertex;
-use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use super::vulkano::device::Device;
 use std::sync::Arc;
 
 use super::plant::*;

@@ -5,8 +5,6 @@
 use cgmath::{Matrix4, Rad, Transform, Vector3, Vector4};
 
 use super::vertex::Vertex;
-use super::vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use super::vulkano::device::Device;
 use std::sync::Arc;
 
 pub const GRIDCELL_TYPE_INVALID_MATERIAL: u32 = 0;
