@@ -1,129 +1,138 @@
-use cgmath::{Matrix4, One, Point3, Quaternion, Rad, Vector3};
-use std::time::Duration;
-use std::time::Instant;
+use cgmath::{Angle, Deg, InnerSpace, Matrix4, Point3, Rad, Vector3};
 
 #[allow(dead_code)]
 
 pub enum CameraMovementDir {
-  Forward,
-  Backward,
-  Upward,
-  Downward,
-  Left,
-  Right,
+    Forward,
+    Backward,
+    Upward,
+    Downward,
+    Left,
+    Right,
 }
 
 pub enum CameraRotationDir {
-  Upward,
-  Downward,
-  Left,
-  Right,
+    Upward,
+    Downward,
+    Left,
+    Right,
+}
+
+// vectors giving the current perception of the camera
+#[derive(Clone, Debug)]
+struct DirVecs {
+    // NOTE: front is actually backwards
+    front: Vector3<f32>,
+    right: Vector3<f32>,
+    up: Vector3<f32>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Camera {
-  begin_time: Instant,
+    // screen dimensions
+    screen_x: u32,
+    screen_y: u32,
 
-  screen_x: u32,            //Horizontal size of screen
-  screen_y: u32,            //Vertical size of screen
-  worldup: Vector3<f32>,    // The normalized vector that the camera percieves to be up
-  rotation: Matrix4<f32>,   // The rotation of the camera
-  loc: Point3<f32>,         // The camera's location in 3d space
-  projection: Matrix4<f32>, // Projection Matrix
-  model: Matrix4<f32>,      // Model Matrix
-  view: Matrix4<f32>,       // View Matrix
+    // global camera position
+    loc: Point3<f32>,
+    // the global up
+    worldup: Vector3<f32>,
+
+    // pitch and yaw values
+    pitch: Rad<f32>,
+    yaw: Rad<f32>,
+
+    // relative directions
+    dirs: DirVecs,
+
+    // Projection Matrix
+    projection: Matrix4<f32>,
+}
+
+impl DirVecs {
+    fn new(worldup: Vector3<f32>, pitch: Rad<f32>, yaw: Rad<f32>) -> DirVecs {
+        let front = Vector3 {
+            x: yaw.cos() * pitch.cos(),
+            y: pitch.sin(),
+            z: yaw.sin() * pitch.cos(),
+        }
+        .normalize();
+        // get other vectors
+        let right = front.cross(worldup).normalize();
+        let up = right.cross(front).normalize();
+        // return values
+        DirVecs { front, right, up }
+    }
 }
 
 impl Camera {
-  pub fn new(location: Point3<f32>, screen_x: u32, screen_y: u32) -> Camera {
-    let mut cam = Camera {
-      begin_time: Instant::now(),
-      screen_x,
-      screen_y,
-      worldup: Vector3::new(0.0, 1.0, 0.0),
-      loc: location,
-      projection: Matrix4::one(),
-      model: Matrix4::one(),
-      view: Matrix4::one(),
-      rotation: Matrix4::one(),
-    };
-    cam.genmodel();
-    cam.genview();
-    cam.genprojection();
-    cam
-  }
+    pub fn new(location: Point3<f32>, screen_x: u32, screen_y: u32) -> Camera {
+        let pitch = Rad::from(Deg(0.0));
+        let yaw = Rad::from(Deg(-90.0));
 
-  pub fn mvp(&self) -> Matrix4<f32> {
-    self.projection * self.view * self.model
-  }
+        let worldup = Vector3::unit_y();
 
-  pub fn translate(&mut self, delta: Vector3<f32>) {
-    self.setloc(self.loc + delta);
-  }
+        Camera {
+            screen_x,
+            screen_y,
+            loc: location,
+            worldup,
+            pitch,
+            yaw,
+            dirs: DirVecs::new(worldup, pitch, yaw),
+            projection: Camera::gen_projection(screen_x, screen_y),
+        }
+    }
 
-  pub fn translate_rot(&mut self, delta: Vector3<f32>) {
-    self.translate(self.rotate_by_camera(delta));
-  }
+    pub fn mvp(&self) -> Matrix4<f32> {
 
-  pub fn setloc(&mut self, loc: Point3<f32>) {
-    self.loc = loc;
-    self.genview();
-  }
+        let view = Matrix4::look_at_rh(self.loc, self.loc - self.dirs.front, self.worldup);
+        self.projection * view
+    }
 
-  pub fn dir_move(&mut self, dir: CameraMovementDir) {
-    let scale = 0.1;
-    self.translate_rot(
-      match dir {
-        CameraMovementDir::Forward => Vector3::unit_z(),
-        CameraMovementDir::Backward => -Vector3::unit_z(),
-        CameraMovementDir::Right => -Vector3::unit_x(),
-        CameraMovementDir::Left => Vector3::unit_x(),
-        CameraMovementDir::Upward => Vector3::unit_y(),
-        CameraMovementDir::Downward => -Vector3::unit_y(),
-      } * scale,
-    );
-  }
+    pub fn translate(&mut self, delta: Vector3<f32>) {
+        self.loc = self.loc + delta;
+    }
 
-  pub fn dir_rotate(&mut self, dir: CameraRotationDir) {
-    let rotval = 0.05;
+    pub fn dir_move(&mut self, dir: CameraMovementDir) {
+        let scale = 0.1;
+        self.translate(match dir {
+            CameraMovementDir::Forward => -self.dirs.front * scale,
+            CameraMovementDir::Backward => self.dirs.front * scale,
+            CameraMovementDir::Right => -self.dirs.right * scale,
+            CameraMovementDir::Left => self.dirs.right * scale,
+            CameraMovementDir::Upward => self.dirs.up * scale,
+            CameraMovementDir::Downward => -self.dirs.up * scale,
+        });
+    }
 
-    let ret = match dir {
-      CameraRotationDir::Right => Matrix4::from_axis_angle(Vector3::unit_y(), Rad(-rotval)),
-      CameraRotationDir::Left => Matrix4::from_axis_angle(Vector3::unit_y(), Rad(rotval)),
-      CameraRotationDir::Upward => Matrix4::from_axis_angle(Vector3::unit_x(), Rad(rotval)),
-      CameraRotationDir::Downward => Matrix4::from_axis_angle(Vector3::unit_x(), Rad(-rotval)),
-    };
-    self.rotation = self.rotation  * ret;
+    pub fn dir_rotate(&mut self, dir: CameraRotationDir) {
+        let rotval = Rad(0.05);
 
-    self.genview();
-  }
+        match dir {
+            CameraRotationDir::Left => self.yaw -= rotval,
+            CameraRotationDir::Right => self.yaw += rotval,
+            CameraRotationDir::Upward => self.pitch += rotval,
+            CameraRotationDir::Downward => self.pitch -= rotval,
+        }
 
-  pub fn setscreen(&mut self, screen_x: u32, screen_y: u32) {
-    self.screen_x = screen_x;
-    self.screen_y = screen_y;
-    self.genprojection();
-  }
+        if self.pitch > Deg(89.0).into() {
+            self.pitch = Deg(89.0).into();
+        } else if self.pitch < Deg(-89.0).into() {
+            self.pitch = Deg(-89.0).into();
+        }
+        // recalculate camera directions
+        self.dirs = DirVecs::new(self.worldup, self.pitch, self.yaw);
+    }
 
-  fn rotate_by_camera(&self, vec: Vector3<f32>) -> Vector3<f32> {
-    (self.rotation * vec.extend(1.0)).truncate()
-  }
+    pub fn set_screen(&mut self, screen_x: u32, screen_y: u32) {
+        self.screen_x = screen_x;
+        self.screen_y = screen_y;
+        self.projection = Camera::gen_projection(screen_x, screen_y);
+    }
 
-  fn genview(&mut self) {
-    // Look at the place in front of us
-    self.view = Matrix4::look_at(
-      self.loc,
-      self.loc + self.rotate_by_camera(Vector3::unit_z()),
-      self.worldup,
-    );
-  }
-
-  fn genmodel(&mut self) {
-    self.model = Matrix4::one()
-  }
-
-  fn genprojection(&mut self) {
-    let aspect_ratio = self.screen_x as f32 / self.screen_y as f32;
-    self.projection =
-      cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0);
-  }
+    fn gen_projection(screen_x: u32, screen_y: u32) -> Matrix4<f32> {
+        let aspect_ratio = screen_x as f32 / screen_y as f32;
+        cgmath::perspective(Rad(std::f32::consts::FRAC_PI_2), aspect_ratio, 0.01, 100.0)
+    }
 }

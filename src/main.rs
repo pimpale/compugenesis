@@ -423,7 +423,7 @@ fn window_size_dependent_setup(
 ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
     let dimensions = images[0].dimensions();
     viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
-    camera.setscreen(dimensions[0], dimensions[1]);
+    camera.set_screen(dimensions[0], dimensions[1]);
 
     let depth_buffer =
         ImageView::new(AttachmentImage::transient(device, dimensions, Format::D16_UNORM).unwrap())
