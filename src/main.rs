@@ -1,4 +1,6 @@
 use cgmath::Point3;
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
@@ -7,11 +9,11 @@ use vulkano::device::{Device, DeviceExtensions, Features};
 use vulkano::format::*;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
-use vulkano::image::{ImageUsage, SwapchainImage};
+use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::instance::Instance;
-use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
+use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline};
+use vulkano::render_pass::{Framebuffer, RenderPass, Subpass};
 use vulkano::swapchain;
 use vulkano::swapchain::{
     AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
@@ -77,9 +79,7 @@ fn main() {
     let (device, mut queues) = Device::new(
         physical,
         &Features::none(),
-        &physical
-            .required_extensions()
-            .union(&device_ext),
+        &physical.required_extensions().union(&device_ext),
         [(queue_family, 0.5)].iter().cloned(),
     )
     .unwrap();
@@ -108,10 +108,10 @@ fn main() {
             .unwrap()
     };
 
-    let vs = shader::vert::Shader::load(device.clone()).unwrap();
-    let fs = shader::frag::Shader::load(device.clone()).unwrap();
+    let vs = shader::vert::load(device.clone()).unwrap();
+    let fs = shader::frag::load(device.clone()).unwrap();
 
-    let render_pass = Arc::new(
+    let render_pass = 
         vulkano::single_pass_renderpass!(device.clone(),
             attachments: {
                 color: {
@@ -132,21 +132,38 @@ fn main() {
                 depth_stencil: {depth}
             }
         )
-        .unwrap(),
-    );
+        .unwrap();
 
-    let graphics_pipeline = Arc::new(
+    let graphics_pipeline = 
         GraphicsPipeline::start()
-            .vertex_input_single_buffer::<vertex::Vertex>()
-            .vertex_shader(vs.main_entry_point(), ())
-            .triangle_list()
-            .viewports_dynamic_scissors_irrelevant(1)
-            .fragment_shader(fs.main_entry_point(), ())
-            .depth_stencil_simple_depth()
-            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-            .build(device.clone())
-            .unwrap(),
-    );
+        // We need to indicate the layout of the vertices.
+        .vertex_input_state(BuffersDefinition::new().vertex::<vertex::Vertex>())
+        // A Vulkan shader can in theory contain multiple entry points, so we have to specify
+        // which one.
+        .vertex_shader(vs.entry_point("main").unwrap(), ())
+        // The content of the vertex buffer describes a list of triangles.
+        .input_assembly_state(InputAssemblyState::new())
+        // Use a resizable viewport set to draw over the entire window
+        .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+        // See `vertex_shader`.
+        .fragment_shader(fs.entry_point("main").unwrap(), ())
+        // We have to indicate which subpass of which render pass this pipeline is going to be used
+        // in. The pipeline will only be usable from this particular subpass.
+        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+        // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
+        .build(device.clone())
+        .unwrap();
+
+
+//            .vertex_input_single_buffer::<vertex::Vertex>()
+//            .vertex_shader(vs.main_entry_point(), ())
+//            .triangle_list()
+//            .viewports_dynamic_scissors_irrelevant(1)
+//            .fragment_shader(fs.main_entry_point(), ())
+//            .depth_stencil_simple_depth()
+//            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+//            .build(device.clone())
+//            .unwrap(),
 
     // Dynamic viewports allow us to recreate just the viewport when the window is resized
     // Otherwise we would have to recreate the whole pipeline.
@@ -420,28 +437,27 @@ fn window_size_dependent_setup(
     render_pass: Arc<RenderPass>,
     viewport: &mut Viewport,
     camera: &mut Camera,
-) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
+) -> Vec<Arc<Framebuffer>> {
     let dimensions = images[0].dimensions();
-    viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
-    camera.set_screen(dimensions[0], dimensions[1]);
+    viewport.dimensions = [dimensions.width() as f32, dimensions.height() as f32];
+    camera.set_screen(dimensions.width(), dimensions.height());
 
-    let depth_buffer =
-        ImageView::new(AttachmentImage::transient(device, dimensions, Format::D16_UNORM).unwrap())
-            .unwrap();
+    let depth_buffer = ImageView::new(
+        AttachmentImage::transient(device, dimensions.width_height(), Format::D16_UNORM).unwrap(),
+    )
+    .unwrap();
 
     images
         .iter()
         .map(|image| {
             let view = ImageView::new(image.clone()).unwrap();
-            Arc::new(
-                Framebuffer::start(render_pass.clone())
-                    .add(view)
-                    .unwrap()
-                    .add(depth_buffer.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap(),
-            ) as Arc<dyn FramebufferAbstract + Send + Sync>
+            Framebuffer::start(render_pass.clone())
+                .add(view)
+                .unwrap()
+                .add(depth_buffer.clone())
+                .unwrap()
+                .build()
+                .unwrap()
         })
         .collect::<Vec<_>>()
 }
