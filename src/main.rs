@@ -1,26 +1,26 @@
 use cgmath::Point3;
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
-use vulkano::device::physical::PhysicalDevice;
-use vulkano::device::{Device, DeviceExtensions, Features};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents,
+};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo};
 use vulkano::format::*;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
-use vulkano::instance::Instance;
+use vulkano::instance::{Instance, InstanceCreateInfo};
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline};
-use vulkano::render_pass::{Framebuffer, RenderPass, Subpass};
-use vulkano::swapchain;
-use vulkano::swapchain::{
-    AcquireError, ColorSpace, PresentMode, SurfaceTransform, Swapchain, SwapchainCreationError,
-};
+use vulkano::render_pass::{Framebuffer, RenderPass, Subpass, FramebufferCreateInfo};
+use vulkano::swapchain::{self, SwapchainCreateInfo};
+use vulkano::swapchain::{AcquireError, Swapchain, SwapchainCreationError};
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::Version;
 
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
@@ -45,97 +45,149 @@ use plant::*;
 fn main() {
     let required_extensions = vulkano_win::required_extensions();
 
-    let instance = Instance::new(None, Version::V1_1, &required_extensions, None).unwrap();
-
-    //Choose the first available Device
-    let physical = PhysicalDevice::enumerate(&instance).next().unwrap();
-
-    //Print some info about the device currently being used
-    println!(
-        "Using device: {} (type: {:?})",
-        physical.properties().device_name,
-        physical.properties().device_type
-    );
+    let instance = Instance::new(InstanceCreateInfo {
+        enabled_extensions: required_extensions,
+        ..Default::default()
+    })
+    .unwrap();
 
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
         .build_vk_surface(&event_loop, instance.clone())
         .unwrap();
 
-    let queue_family = physical
-        .queue_families()
-        .find(|&q| {
-            q.supports_graphics()
-                && q.supports_compute()
-                && surface.is_supported(q).unwrap_or(false)
+    // Choose device extensions that we're going to use.
+    // In order to present images to a surface, we need a `Swapchain`, which is provided by the
+    // `khr_swapchain` extension.
+    let device_extensions = DeviceExtensions {
+        khr_swapchain: true,
+        ..DeviceExtensions::none()
+    };
+
+    // We then choose which physical device to use. First, we enumerate all the available physical
+    // devices, then apply filters to narrow them down to those that can support our needs.
+    let (physical_device, queue_family) = PhysicalDevice::enumerate(&instance)
+        .filter(|&p| {
+            // Some devices may not support the extensions or features that your application, or
+            // report properties and limits that are not sufficient for your application. These
+            // should be filtered out here.
+            p.supported_extensions().is_superset_of(&device_extensions)
+        })
+        .filter_map(|p| {
+            p.queue_families()
+                .find(|&q| {
+                    // We select a queue family that supports graphics operations. When drawing to
+                    // a window surface, as we do in this example, we also need to check that queues
+                    // in this queue family are capable of presenting images to the surface.
+                    q.supports_graphics() && q.supports_surface(&surface).unwrap_or(false)
+                })
+                // The code here searches for the first queue family that is suitable. If none is
+                // found, `None` is returned to `filter_map`, which disqualifies this physical
+                // device.
+                .map(|q| (p, q))
+        })
+        .min_by_key(|(p, _)| {
+            // We assign a better score to device types that are likely to be faster/better.
+            match p.properties().device_type {
+                PhysicalDeviceType::DiscreteGpu => 0,
+                PhysicalDeviceType::IntegratedGpu => 1,
+                PhysicalDeviceType::VirtualGpu => 2,
+                PhysicalDeviceType::Cpu => 3,
+                PhysicalDeviceType::Other => 4,
+            }
         })
         .unwrap();
 
-    let device_ext = DeviceExtensions {
+    //Print some info about the device currently being used
+    println!(
+        "Using device: {} (type: {:?})",
+        physical_device.properties().device_name,
+        physical_device.properties().device_type
+    );
+
+    let device_extensions = DeviceExtensions {
         khr_swapchain: true,
         ..DeviceExtensions::none()
     };
 
     let (device, mut queues) = Device::new(
-        physical,
-        &Features::none(),
-        &physical.required_extensions().union(&device_ext),
-        [(queue_family, 0.5)].iter().cloned(),
+        physical_device,
+        DeviceCreateInfo {
+            enabled_extensions: physical_device
+                .required_extensions()
+                .union(&device_extensions),
+            queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
+            ..Default::default()
+        },
     )
     .unwrap();
 
     let queue = queues.next().unwrap();
 
     let (mut swapchain, images) = {
-        let caps = surface.capabilities(physical).unwrap();
+        // Querying the capabilities of the surface. When we create the swapchain we can only
+        // pass values that are allowed by the capabilities.
+        let surface_capabilities = physical_device
+            .surface_capabilities(&surface, Default::default())
+            .unwrap();
 
-        let alpha = caps.supported_composite_alpha.iter().next().unwrap();
-
-        let format = caps.supported_formats[0].0;
+        // Choosing the internal format that the images will have.
+        let image_format = Some(
+            physical_device
+                .surface_formats(&surface, Default::default())
+                .unwrap()[0]
+                .0,
+        );
 
         // Please take a look at the docs for the meaning of the parameters we didn't mention.
-        Swapchain::start(device.clone(), surface.clone())
-            .num_images(caps.min_image_count)
-            .format(format)
-            .dimensions(surface.window().inner_size().into())
-            .usage(ImageUsage::color_attachment())
-            .sharing_mode(&queue)
-            .transform(SurfaceTransform::Identity)
-            .composite_alpha(alpha)
-            .present_mode(PresentMode::Fifo)
-            .color_space(ColorSpace::SrgbNonLinear)
-            .build()
-            .unwrap()
+        Swapchain::new(
+            device.clone(),
+            surface.clone(),
+            SwapchainCreateInfo {
+                min_image_count: surface_capabilities.min_image_count,
+                image_format,
+                image_extent: surface.window().inner_size().into(),
+                image_usage: ImageUsage::color_attachment(),
+                // The alpha mode indicates how the alpha value of the final image will behave. For
+                // example, you can choose whether the window will be opaque or transparent.
+                composite_alpha: surface_capabilities
+                    .supported_composite_alpha
+                    .iter()
+                    .next()
+                    .unwrap(),
+
+                ..Default::default()
+            },
+        )
+        .unwrap()
     };
 
     let vs = shader::vert::load(device.clone()).unwrap();
     let fs = shader::frag::load(device.clone()).unwrap();
 
-    let render_pass = 
-        vulkano::single_pass_renderpass!(device.clone(),
-            attachments: {
-                color: {
-                    load: Clear,
-                    store: Store,
-                    format: swapchain.format(),
-                    samples: 1,
-                },
-                depth: {
-                    load: Clear,
-                    store: DontCare,
-                    format: Format::D16_UNORM,
-                    samples: 1,
-                }
+    let render_pass = vulkano::single_pass_renderpass!(device.clone(),
+        attachments: {
+            color: {
+                load: Clear,
+                store: Store,
+                format: swapchain.image_format(),
+                samples: 1,
             },
-            pass: {
-                color: [color],
-                depth_stencil: {depth}
+            depth: {
+                load: Clear,
+                store: DontCare,
+                format: Format::D16_UNORM,
+                samples: 1,
             }
-        )
-        .unwrap();
+        },
+        pass: {
+            color: [color],
+            depth_stencil: {depth}
+        }
+    )
+    .unwrap();
 
-    let graphics_pipeline = 
-        GraphicsPipeline::start()
+    let graphics_pipeline = GraphicsPipeline::start()
         // We need to indicate the layout of the vertices.
         .vertex_input_state(BuffersDefinition::new().vertex::<vertex::Vertex>())
         // A Vulkan shader can in theory contain multiple entry points, so we have to specify
@@ -153,17 +205,6 @@ fn main() {
         // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
         .build(device.clone())
         .unwrap();
-
-
-//            .vertex_input_single_buffer::<vertex::Vertex>()
-//            .vertex_shader(vs.main_entry_point(), ())
-//            .triangle_list()
-//            .viewports_dynamic_scissors_irrelevant(1)
-//            .fragment_shader(fs.main_entry_point(), ())
-//            .depth_stencil_simple_depth()
-//            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-//            .build(device.clone())
-//            .unwrap(),
 
     // Dynamic viewports allow us to recreate just the viewport when the window is resized
     // Otherwise we would have to recreate the whole pipeline.
@@ -263,7 +304,7 @@ fn main() {
                 recreate_swapchain = true;
             }
             Event::WindowEvent {
-                event: WindowEvent::KeyboardInput { input, .. },
+                event: WindowEvent::KeyboardInput{ input, .. },
                 ..
             } => {
                 if let Some(kc) = input.virtual_keycode {
@@ -305,13 +346,15 @@ fn main() {
                 // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
                 if recreate_swapchain {
                     // Get the new dimensions of the window.
-                    let dimensions: [u32; 2] = surface.window().inner_size().into();
                     let (new_swapchain, new_images) =
-                        match swapchain.recreate().dimensions(dimensions).build() {
+                        match swapchain.recreate(SwapchainCreateInfo {
+                            image_extent: surface.window().inner_size().into(),
+                            ..swapchain.create_info()
+                        }) {
                             Ok(r) => r,
                             // This error tends to happen when the user is manually resizing the window.
                             // Simply restarting the loop is the easiest way to fix this issue.
-                            Err(SwapchainCreationError::UnsupportedDimensions) => return,
+                            Err(SwapchainCreationError::ImageExtentNotSupported {..}) => return,
                             Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
                         };
 
@@ -442,7 +485,7 @@ fn window_size_dependent_setup(
     viewport.dimensions = [dimensions.width() as f32, dimensions.height() as f32];
     camera.set_screen(dimensions.width(), dimensions.height());
 
-    let depth_buffer = ImageView::new(
+    let depth_buffer = ImageView::new_default(
         AttachmentImage::transient(device, dimensions.width_height(), Format::D16_UNORM).unwrap(),
     )
     .unwrap();
@@ -450,14 +493,15 @@ fn window_size_dependent_setup(
     images
         .iter()
         .map(|image| {
-            let view = ImageView::new(image.clone()).unwrap();
-            Framebuffer::start(render_pass.clone())
-                .add(view)
-                .unwrap()
-                .add(depth_buffer.clone())
-                .unwrap()
-                .build()
-                .unwrap()
+            let view = ImageView::new_default(image.clone()).unwrap();
+            Framebuffer::new(
+                render_pass.clone(),
+                FramebufferCreateInfo {
+                    attachments: vec![view, depth_buffer.clone()],
+                    ..Default::default()
+                }
+            )
+            .unwrap()
         })
         .collect::<Vec<_>>()
 }
