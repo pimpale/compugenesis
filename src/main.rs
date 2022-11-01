@@ -2,19 +2,23 @@ use cgmath::Point3;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
+use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+};
+use vulkano::device::physical::{PhysicalDeviceType};
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::swapchain::{self, SwapchainCreateInfo};
+use vulkano::swapchain::{self, SwapchainCreateInfo, SwapchainPresentInfo};
 use vulkano::swapchain::{AcquireError, Swapchain, SwapchainCreationError};
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
@@ -55,18 +59,16 @@ fn main() {
     )
     .unwrap();
 
+    let device_extensions = DeviceExtensions {
+        khr_swapchain: true,
+        ..DeviceExtensions::empty()
+    };
+
+
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
         .build_vk_surface(&event_loop, instance.clone())
         .unwrap();
-
-    // Choose device extensions that we're going to use.
-    // In order to present images to a surface, we need a `Swapchain`, which is provided by the
-    // `khr_swapchain` extension.
-    let device_extensions = DeviceExtensions {
-        khr_swapchain: true,
-        ..DeviceExtensions::none()
-    };
 
     // We then choose which physical device to use. First, we enumerate all the available physical
     // devices, then apply filters to narrow them down to those that can support our needs.
@@ -134,18 +136,14 @@ fn main() {
         physical_device.properties().device_type
     );
 
-    let device_extensions = DeviceExtensions {
-        khr_swapchain: true,
-        ..DeviceExtensions::none()
-    };
-
     let (device, mut queues) = Device::new(
         physical_device,
         DeviceCreateInfo {
-            enabled_extensions: physical_device
-                .required_extensions()
-                .union(&device_extensions),
-            queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
+            enabled_extensions: device_extensions,
+            queue_create_infos: vec![QueueCreateInfo {
+                queue_family_index,
+                ..Default::default()
+            }],
             ..Default::default()
         },
     )
@@ -156,17 +154,21 @@ fn main() {
     let (mut swapchain, images) = {
         // Querying the capabilities of the surface. When we create the swapchain we can only
         // pass values that are allowed by the capabilities.
-        let surface_capabilities = physical_device
+        let surface_capabilities = device
+            .physical_device()
             .surface_capabilities(&surface, Default::default())
             .unwrap();
 
         // Choosing the internal format that the images will have.
         let image_format = Some(
-            physical_device
+            device
+                .physical_device()
                 .surface_formats(&surface, Default::default())
                 .unwrap()[0]
                 .0,
         );
+
+        let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
 
         // Please take a look at the docs for the meaning of the parameters we didn't mention.
         Swapchain::new(
@@ -174,9 +176,29 @@ fn main() {
             surface.clone(),
             SwapchainCreateInfo {
                 min_image_count: surface_capabilities.min_image_count,
+
                 image_format,
-                image_extent: surface.window().inner_size().into(),
-                image_usage: ImageUsage::color_attachment(),
+                // The dimensions of the window, only used to initially setup the swapchain.
+                // NOTE:
+                // On some drivers the swapchain dimensions are specified by
+                // `surface_capabilities.current_extent` and the swapchain size must use these
+                // dimensions.
+                // These dimensions are always the same as the window dimensions.
+                //
+                // However, other drivers don't specify a value, i.e.
+                // `surface_capabilities.current_extent` is `None`. These drivers will allow
+                // anything, but the only sensible value is the window
+                // dimensions.
+                //
+                // Both of these cases need the swapchain to use the window dimensions, so we just
+                // use that.
+                image_extent: window.inner_size().into(),
+
+                image_usage: ImageUsage {
+                    color_attachment: true,
+                    ..ImageUsage::empty()
+                },
+
                 // The alpha mode indicates how the alpha value of the final image will behave. For
                 // example, you can choose whether the window will be opaque or transparent.
                 composite_alpha: surface_capabilities
@@ -235,6 +257,15 @@ fn main() {
         .build(device.clone())
         .unwrap();
 
+    let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
+
+    // Before we can start creating and recording command buffers, we need a way of allocating
+    // them. Vulkano provides a command buffer allocator, which manages raw Vulkan command pools
+    // underneath and provides a safe interface for them.
+    let command_buffer_allocator =
+        StandardCommandBufferAllocator::new(device.clone(), Default::default());
+
+
     // Dynamic viewports allow us to recreate just the viewport when the window is resized
     // Otherwise we would have to recreate the whole pipeline.
     let mut viewport = Viewport {
@@ -243,9 +274,11 @@ fn main() {
         depth_range: 0.0..1.0,
     };
 
+
     let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
 
     let mut framebuffers = window_size_dependent_setup(
+        &memory_allocator ,
         device.clone(),
         &images,
         render_pass.clone(),
@@ -354,13 +387,24 @@ fn main() {
                 }
             }
             Event::RedrawEventsCleared => {
+                // Do not draw frame when screen dimensions are zero.
+                // On Windows, this can occur from minimizing the application.
+                let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
+                let dimensions = window.inner_size();
+                if dimensions.width == 0 || dimensions.height == 0 {
+                    return;
+                }
+
                 node_buffer.update_all();
                 let vertex_buffer = {
                     let mut vecs = node_buffer.gen_vertex(&plant_buffer);
                     vecs.append(&mut grid_buffer.gen_vertex());
                     CpuAccessibleBuffer::from_iter(
-                        device.clone(),
-                        BufferUsage::all(),
+                        &memory_allocator,
+                        BufferUsage {
+                            vertex_buffer: true,
+                            ..BufferUsage::empty()
+                        },
                         false,
                         vecs.iter().cloned(),
                     )
@@ -377,7 +421,7 @@ fn main() {
                     // Get the new dimensions of the window.
                     let (new_swapchain, new_images) =
                         match swapchain.recreate(SwapchainCreateInfo {
-                            image_extent: surface.window().inner_size().into(),
+                            image_extent: dimensions.into(),
                             ..swapchain.create_info()
                         }) {
                             Ok(r) => r,
@@ -391,6 +435,7 @@ fn main() {
                     // Because framebuffers contains an Arc on the old swapchain, we need to
                     // recreate framebuffers as well.
                     framebuffers = window_size_dependent_setup(
+                        &memory_allocator,
                         device.clone(),
                         &new_images,
                         render_pass.clone(),
@@ -407,7 +452,7 @@ fn main() {
                 //
                 // This function can block if no image is available. The parameter is an optional timeout
                 // after which the function call will return an error.
-                let (image_num, suboptimal, acquire_future) =
+                let (image_index, suboptimal, acquire_future) =
                     match swapchain::acquire_next_image(swapchain.clone(), None) {
                         Ok(r) => r,
                         Err(AcquireError::OutOfDate) => {
@@ -434,8 +479,8 @@ fn main() {
                 // Note that we have to pass a queue family when we create the command buffer. The command
                 // buffer will only be executable on that given queue family.
                 let mut builder = AutoCommandBufferBuilder::primary(
-                    device.clone(),
-                    queue.family(),
+                    &command_buffer_allocator,
+                    queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
                 .unwrap();
@@ -443,9 +488,17 @@ fn main() {
                 // Finish building the command buffer by calling `build`.
                 builder
                     .begin_render_pass(
-                        framebuffers[image_num].clone(),
+                        RenderPassBeginInfo {
+                            clear_values: vec![Some([0.53, 0.81, 0.92, 1.0].into())],
+
+                            ..RenderPassBeginInfo::framebuffer(
+                                framebuffers[image_index as usize].clone(),
+                            )
+                        },
+                        // The contents of the first (and only) subpass. This can be either
+                        // `Inline` or `SecondaryCommandBuffers`. The latter is a bit more advanced
+                        // and is not covered here.
                         SubpassContents::Inline,
-                        vec![[0.53, 0.81, 0.92, 1.0].into(), 1f32.into()],
                     )
                     .unwrap()
                     .set_viewport(0, vec![viewport.clone()])
@@ -468,6 +521,7 @@ fn main() {
                     .unwrap();
 
                 let command_buffer = builder.build().unwrap();
+
                 let future = previous_frame_end
                     .take()
                     .unwrap()
@@ -480,7 +534,10 @@ fn main() {
                     // This function does not actually present the image immediately. Instead it submits a
                     // present command at the end of the queue. This means that it will only be presented once
                     // the GPU has finished executing the command buffer that draws the triangle.
-                    .then_swapchain_present(queue.clone(), swapchain.clone(), image_num)
+                    .then_swapchain_present(
+                        queue.clone(),
+                        SwapchainPresentInfo::swapchain_image_index(swapchain.clone(), image_index),
+                    )
                     .then_signal_fence_and_flush();
 
                 match future {
@@ -504,6 +561,7 @@ fn main() {
 
 /// This method is called once during initialization, then again whenever the window is resized
 fn window_size_dependent_setup(
+    memory_allocator: &StandardMemoryAllocator,
     device: Arc<Device>,
     images: &[Arc<SwapchainImage>],
     render_pass: Arc<RenderPass>,
@@ -515,7 +573,7 @@ fn window_size_dependent_setup(
     camera.set_screen(dimensions.width(), dimensions.height());
 
     let depth_buffer = ImageView::new_default(
-        AttachmentImage::transient(device, dimensions.width_height(), Format::D16_UNORM).unwrap(),
+        AttachmentImage::transient(memory_allocator, dimensions.width_height(), Format::D16_UNORM).unwrap(),
     )
     .unwrap();
 
@@ -526,7 +584,7 @@ fn window_size_dependent_setup(
             Framebuffer::new(
                 render_pass.clone(),
                 FramebufferCreateInfo {
-                    attachments: vec![view, depth_buffer.clone()],
+                    attachments: vec![view],
                     ..Default::default()
                 },
             )
