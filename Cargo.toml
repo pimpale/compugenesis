@@ -7,14 +7,14 @@ publish = false
 
 [dependencies]
 rand = "0.8.5"
-vulkano = "0.29.0"
-vulkano-shaders = "0.29.0"
-vulkano-win = "0.29.0"
+vulkano = "0.32.0"
+vulkano-shaders = "0.32.0"
+vulkano-win = "0.32.0"
 cgmath = "0.18.0"
-image = "0.24.2"
-winit = "0.26.1"
-time = "0.3.9"
+image = "0.24.4"
+winit = "0.27.5"
+time = "0.3.16"
 csv = "1.1.6"
-serde_json = "1.0.81"
-serde = { version = "1.0.137", features = ["derive"] }
-bytemuck = "1.9.1"
+serde_json = "1.0.87"
+serde = { version = "1.0.147", features = ["derive"] }
+bytemuck = "1.12.2"

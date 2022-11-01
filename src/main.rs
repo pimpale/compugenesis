@@ -2,12 +2,9 @@ use cgmath::Point3;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents,
-};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo};
-use vulkano::format::*;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
@@ -16,11 +13,12 @@ use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline};
-use vulkano::render_pass::{Framebuffer, RenderPass, Subpass, FramebufferCreateInfo};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::swapchain::{self, SwapchainCreateInfo};
 use vulkano::swapchain::{AcquireError, Swapchain, SwapchainCreationError};
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::{format::*, VulkanLibrary};
 
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
@@ -43,12 +41,18 @@ use node::*;
 use plant::*;
 
 fn main() {
-    let required_extensions = vulkano_win::required_extensions();
+    let library = VulkanLibrary::new().unwrap();
+    let required_extensions = vulkano_win::required_extensions(&library);
 
-    let instance = Instance::new(InstanceCreateInfo {
-        enabled_extensions: required_extensions,
-        ..Default::default()
-    })
+    let instance = Instance::new(
+        library,
+        InstanceCreateInfo {
+            enabled_extensions: required_extensions,
+            // Enable enumerating devices that use non-conformant vulkan implementations. (ex. MoltenVK)
+            enumerate_portability: true,
+            ..Default::default()
+        },
+    )
     .unwrap();
 
     let event_loop = EventLoop::new();
@@ -66,37 +70,62 @@ fn main() {
 
     // We then choose which physical device to use. First, we enumerate all the available physical
     // devices, then apply filters to narrow them down to those that can support our needs.
-    let (physical_device, queue_family) = PhysicalDevice::enumerate(&instance)
-        .filter(|&p| {
+    let (physical_device, queue_family_index) = instance
+        .enumerate_physical_devices()
+        .unwrap()
+        .filter(|p| {
             // Some devices may not support the extensions or features that your application, or
             // report properties and limits that are not sufficient for your application. These
             // should be filtered out here.
-            p.supported_extensions().is_superset_of(&device_extensions)
+            p.supported_extensions().contains(&device_extensions)
         })
         .filter_map(|p| {
-            p.queue_families()
-                .find(|&q| {
+            // For each physical device, we try to find a suitable queue family that will execute
+            // our draw commands.
+            //
+            // Devices can provide multiple queues to run commands in parallel (for example a draw
+            // queue and a compute queue), similar to CPU threads. This is something you have to
+            // have to manage manually in Vulkan. Queues of the same type belong to the same
+            // queue family.
+            //
+            // Here, we look for a single queue family that is suitable for our purposes. In a
+            // real-life application, you may want to use a separate dedicated transfer queue to
+            // handle data transfers in parallel with graphics operations. You may also need a
+            // separate queue for compute operations, if your application uses those.
+            p.queue_family_properties()
+                .iter()
+                .enumerate()
+                .position(|(i, q)| {
                     // We select a queue family that supports graphics operations. When drawing to
                     // a window surface, as we do in this example, we also need to check that queues
                     // in this queue family are capable of presenting images to the surface.
-                    q.supports_graphics() && q.supports_surface(&surface).unwrap_or(false)
+                    q.queue_flags.graphics && p.surface_support(i as u32, &surface).unwrap_or(false)
                 })
                 // The code here searches for the first queue family that is suitable. If none is
                 // found, `None` is returned to `filter_map`, which disqualifies this physical
                 // device.
-                .map(|q| (p, q))
+                .map(|i| (p, i as u32))
         })
+        // All the physical devices that pass the filters above are suitable for the application.
+        // However, not every device is equal, some are preferred over others. Now, we assign
+        // each physical device a score, and pick the device with the
+        // lowest ("best") score.
+        //
+        // In this example, we simply select the best-scoring device to use in the application.
+        // In a real-life setting, you may want to use the best-scoring device only as a
+        // "default" or "recommended" device, and let the user choose the device themselves.
         .min_by_key(|(p, _)| {
-            // We assign a better score to device types that are likely to be faster/better.
+            // We assign a lower score to device types that are likely to be faster/better.
             match p.properties().device_type {
                 PhysicalDeviceType::DiscreteGpu => 0,
                 PhysicalDeviceType::IntegratedGpu => 1,
                 PhysicalDeviceType::VirtualGpu => 2,
                 PhysicalDeviceType::Cpu => 3,
                 PhysicalDeviceType::Other => 4,
+                _ => 5,
             }
         })
-        .unwrap();
+        .expect("No suitable physical device found");
 
     //Print some info about the device currently being used
     println!(
@@ -304,7 +333,7 @@ fn main() {
                 recreate_swapchain = true;
             }
             Event::WindowEvent {
-                event: WindowEvent::KeyboardInput{ input, .. },
+                event: WindowEvent::KeyboardInput { input, .. },
                 ..
             } => {
                 if let Some(kc) = input.virtual_keycode {
@@ -354,7 +383,7 @@ fn main() {
                             Ok(r) => r,
                             // This error tends to happen when the user is manually resizing the window.
                             // Simply restarting the loop is the easiest way to fix this issue.
-                            Err(SwapchainCreationError::ImageExtentNotSupported {..}) => return,
+                            Err(SwapchainCreationError::ImageExtentNotSupported { .. }) => return,
                             Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
                         };
 
@@ -476,7 +505,7 @@ fn main() {
 /// This method is called once during initialization, then again whenever the window is resized
 fn window_size_dependent_setup(
     device: Arc<Device>,
-    images: &[Arc<SwapchainImage<Window>>],
+    images: &[Arc<SwapchainImage>],
     render_pass: Arc<RenderPass>,
     viewport: &mut Viewport,
     camera: &mut Camera,
@@ -499,7 +528,7 @@ fn window_size_dependent_setup(
                 FramebufferCreateInfo {
                     attachments: vec![view, depth_buffer.clone()],
                     ..Default::default()
-                }
+                },
             )
             .unwrap()
         })
