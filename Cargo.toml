@@ -7,11 +7,11 @@ publish = false
 
 [dependencies]
 rand = "0.8.5"
-vulkano = "0.32.0"
+vulkano = "0.32.1"
 vulkano-shaders = "0.32.0"
 vulkano-win = "0.32.0"
 cgmath = "0.18.0"
-image = "0.24.4"
+image = "0.24.5"
 winit = "0.27.5"
 time = "0.3.17"
 csv = "1.1.6"
