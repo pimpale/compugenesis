@@ -5,7 +5,7 @@
 use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4, One};
 
 use super::archetype::*;
-use super::vertex::Vertex;
+use super::vertex::mVertex as Vertex;
 use std::sync::Arc;
 
 use super::plant::*;

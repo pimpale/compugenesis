@@ -6,7 +6,7 @@ use cgmath::{Deg, InnerSpace, Matrix4, Rad, Transform, Vector3, Vector4};
 use std::convert::TryInto;
 
 use super::archetype::*;
-use super::vertex::Vertex;
+use super::vertex::mVertex as Vertex;
 use std::sync::Arc;
 
 pub const INVALID_INDEX: u32 = std::u32::MAX;

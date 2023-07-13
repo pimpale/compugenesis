@@ -1,20 +1,20 @@
 use cgmath::Point3;
 use std::convert::TryFrom;
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
 };
-use vulkano::device::physical::{PhysicalDeviceType};
-use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo};
+use vulkano::device::physical::PhysicalDeviceType;
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo, QueueFlags};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::instance::{Instance, InstanceCreateInfo};
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
@@ -44,6 +44,8 @@ use grid::*;
 use node::*;
 use plant::*;
 
+use crate::vertex::mVertex;
+
 fn main() {
     let library = VulkanLibrary::new().unwrap();
     let required_extensions = vulkano_win::required_extensions(&library);
@@ -63,7 +65,6 @@ fn main() {
         khr_swapchain: true,
         ..DeviceExtensions::empty()
     };
-
 
     let event_loop = EventLoop::new();
     let surface = WindowBuilder::new()
@@ -101,7 +102,8 @@ fn main() {
                     // We select a queue family that supports graphics operations. When drawing to
                     // a window surface, as we do in this example, we also need to check that queues
                     // in this queue family are capable of presenting images to the surface.
-                    q.queue_flags.graphics && p.surface_support(i as u32, &surface).unwrap_or(false)
+                    q.queue_flags.intersects(QueueFlags::GRAPHICS)
+                        && p.surface_support(i as u32, &surface).unwrap_or(false)
                 })
                 // The code here searches for the first queue family that is suitable. If none is
                 // found, `None` is returned to `filter_map`, which disqualifies this physical
@@ -194,16 +196,13 @@ fn main() {
                 // use that.
                 image_extent: window.inner_size().into(),
 
-                image_usage: ImageUsage {
-                    color_attachment: true,
-                    ..ImageUsage::empty()
-                },
+                image_usage: ImageUsage::COLOR_ATTACHMENT,
 
                 // The alpha mode indicates how the alpha value of the final image will behave. For
                 // example, you can choose whether the window will be opaque or transparent.
                 composite_alpha: surface_capabilities
                     .supported_composite_alpha
-                    .iter()
+                    .into_iter()
                     .next()
                     .unwrap(),
 
@@ -212,9 +211,6 @@ fn main() {
         )
         .unwrap()
     };
-
-    let vs = shader::vert::load(device.clone()).unwrap();
-    let fs = shader::frag::load(device.clone()).unwrap();
 
     let render_pass = vulkano::single_pass_renderpass!(device.clone(),
         attachments: {
@@ -238,21 +234,26 @@ fn main() {
     )
     .unwrap();
 
+    let vs = shader::vert::load(device.clone()).unwrap();
+    let fs = shader::frag::load(device.clone()).unwrap();
+
+    // Before we draw we have to create what is called a pipeline. This is similar to an OpenGL
+    // program, but much more specific.
     let graphics_pipeline = GraphicsPipeline::start()
+        // We have to indicate which subpass of which render pass this pipeline is going to be used
+        // in. The pipeline will only be usable from this particular subpass.
+        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
         // We need to indicate the layout of the vertices.
-        .vertex_input_state(BuffersDefinition::new().vertex::<vertex::Vertex>())
+        .vertex_input_state(mVertex::per_vertex())
+        // The content of the vertex buffer describes a list of triangles.
+        .input_assembly_state(InputAssemblyState::new())
         // A Vulkan shader can in theory contain multiple entry points, so we have to specify
         // which one.
         .vertex_shader(vs.entry_point("main").unwrap(), ())
-        // The content of the vertex buffer describes a list of triangles.
-        .input_assembly_state(InputAssemblyState::new())
         // Use a resizable viewport set to draw over the entire window
         .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
         // See `vertex_shader`.
         .fragment_shader(fs.entry_point("main").unwrap(), ())
-        // We have to indicate which subpass of which render pass this pipeline is going to be used
-        // in. The pipeline will only be usable from this particular subpass.
-        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
         // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
         .build(device.clone())
         .unwrap();
@@ -265,7 +266,6 @@ fn main() {
     let command_buffer_allocator =
         StandardCommandBufferAllocator::new(device.clone(), Default::default());
 
-
     // Dynamic viewports allow us to recreate just the viewport when the window is resized
     // Otherwise we would have to recreate the whole pipeline.
     let mut viewport = Viewport {
@@ -274,11 +274,10 @@ fn main() {
         depth_range: 0.0..1.0,
     };
 
-
     let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
 
     let mut framebuffers = window_size_dependent_setup(
-        &memory_allocator ,
+        &memory_allocator,
         device.clone(),
         &images,
         render_pass.clone(),
@@ -399,13 +398,16 @@ fn main() {
                 let vertex_buffer = {
                     let mut vecs = node_buffer.gen_vertex(&plant_buffer);
                     vecs.append(&mut grid_buffer.gen_vertex());
-                    CpuAccessibleBuffer::from_iter(
+                    Buffer::from_iter(
                         &memory_allocator,
-                        BufferUsage {
-                            vertex_buffer: true,
-                            ..BufferUsage::empty()
+                        BufferCreateInfo {
+                            usage: BufferUsage::VERTEX_BUFFER,
+                            ..Default::default()
                         },
-                        false,
+                        AllocationCreateInfo {
+                            usage: MemoryUsage::Upload,
+                            ..Default::default()
+                        },
                         vecs.iter().cloned(),
                     )
                     .unwrap()
@@ -489,8 +491,10 @@ fn main() {
                 builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
-                            clear_values: vec![Some([0.53, 0.81, 0.92, 1.0].into())],
-
+                            clear_values: vec![
+                                Some([0.53, 0.81, 0.92, 1.0].into()),
+                                Some(1f32.into()),
+                            ],
                             ..RenderPassBeginInfo::framebuffer(
                                 framebuffers[image_index as usize].clone(),
                             )
@@ -508,7 +512,7 @@ fn main() {
                         graphics_pipeline.layout().clone(),
                         // TODO: location?
                         0,
-                        shader::vert::ty::PushConstantData {
+                        shader::vert::PushConstantData {
                             mvp: camera.mvp().into(),
                         },
                     )
@@ -573,7 +577,12 @@ fn window_size_dependent_setup(
     camera.set_screen(dimensions.width(), dimensions.height());
 
     let depth_buffer = ImageView::new_default(
-        AttachmentImage::transient(memory_allocator, dimensions.width_height(), Format::D16_UNORM).unwrap(),
+        AttachmentImage::transient(
+            memory_allocator,
+            dimensions.width_height(),
+            Format::D16_UNORM,
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -584,7 +593,7 @@ fn window_size_dependent_setup(
             Framebuffer::new(
                 render_pass.clone(),
                 FramebufferCreateInfo {
-                    attachments: vec![view],
+                    attachments: vec![view, depth_buffer.clone()],
                     ..Default::default()
                 },
             )
