@@ -1,4 +1,13 @@
 use cgmath::Point3;
+use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+use vulkano::pipeline::graphics::color_blend::{ColorBlendState, ColorBlendAttachmentState};
+use vulkano::pipeline::graphics::depth_stencil::{DepthStencilState, DepthState};
+use vulkano::pipeline::graphics::multisample::MultisampleState;
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
+use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
+use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+use vulkano::shader::EntryPoint;
+use winit::event_loop::{EventLoop, ControlFlow};
 use std::convert::TryFrom;
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
@@ -7,26 +16,22 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
 };
 use vulkano::device::physical::PhysicalDeviceType;
-use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo, QueueFlags};
-use vulkano::image::attachment::AttachmentImage;
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo, QueueFlags, DeviceOwned};
 use vulkano::image::view::ImageView;
-use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
-use vulkano::instance::{Instance, InstanceCreateInfo};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::vertex_input::Vertex;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::{GraphicsPipeline, Pipeline};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineShaderStageCreateInfo, PipelineLayout, DynamicState};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::swapchain::{self, SwapchainCreateInfo, SwapchainPresentInfo};
-use vulkano::swapchain::{AcquireError, Swapchain, SwapchainCreationError};
-use vulkano::sync;
-use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::{format::*, VulkanLibrary};
+use vulkano::swapchain::{self, Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo};
+use vulkano::sync::GpuFuture;
+use vulkano::{format::*, Validated, VulkanLibrary};
+use vulkano::{sync, VulkanError};
 
-use vulkano_win::VkSurfaceBuild;
-use winit::event::{Event, VirtualKeyCode, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop};
+use winit::event::{Event, WindowEvent, VirtualKeyCode};
 use winit::window::{Window, WindowBuilder};
 
 mod archetype;
@@ -48,14 +53,14 @@ use crate::vertex::mVertex;
 
 fn main() {
     let library = VulkanLibrary::new().unwrap();
-    let required_extensions = vulkano_win::required_extensions(&library);
+    let event_loop = EventLoop::new();
+    let required_extensions = Surface::required_extensions(&event_loop);
 
     let instance = Instance::new(
         library,
         InstanceCreateInfo {
+            flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
             enabled_extensions: required_extensions,
-            // Enable enumerating devices that use non-conformant vulkan implementations. (ex. MoltenVK)
-            enumerate_portability: true,
             ..Default::default()
         },
     )
@@ -66,10 +71,8 @@ fn main() {
         ..DeviceExtensions::empty()
     };
 
-    let event_loop = EventLoop::new();
-    let surface = WindowBuilder::new()
-        .build_vk_surface(&event_loop, instance.clone())
-        .unwrap();
+    let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
+    let surface = Surface::from_window(instance.clone(), window.clone()).unwrap();
 
     // We then choose which physical device to use. First, we enumerate all the available physical
     // devices, then apply filters to narrow them down to those that can support our needs.
@@ -162,13 +165,12 @@ fn main() {
             .unwrap();
 
         // Choosing the internal format that the images will have.
-        let image_format = Some(
+        let image_format = 
             device
                 .physical_device()
                 .surface_formats(&surface, Default::default())
                 .unwrap()[0]
-                .0,
-        );
+                .0;
 
         let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
 
@@ -177,7 +179,7 @@ fn main() {
             device.clone(),
             surface.clone(),
             SwapchainCreateInfo {
-                min_image_count: surface_capabilities.min_image_count,
+                min_image_count: surface_capabilities.min_image_count.max(2),
 
                 image_format,
                 // The dimensions of the window, only used to initially setup the swapchain.
@@ -212,78 +214,58 @@ fn main() {
         .unwrap()
     };
 
-    let render_pass = vulkano::single_pass_renderpass!(device.clone(),
+
+    let vs = shader::vert::load(device.clone())
+        .unwrap()
+        .entry_point("main")
+        .unwrap();
+    let fs = shader::frag::load(device.clone())
+        .unwrap()
+        .entry_point("main")
+        .unwrap();
+
+    let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+
+    let render_pass = vulkano::single_pass_renderpass!(
+        device.clone(),
         attachments: {
             color: {
-                load: Clear,
-                store: Store,
                 format: swapchain.image_format(),
                 samples: 1,
+                load_op: Clear,
+                store_op: Store,
             },
-            depth: {
-                load: Clear,
-                store: DontCare,
+            depth_stencil: {
                 format: Format::D16_UNORM,
                 samples: 1,
-            }
+                load_op: Clear,
+                store_op: DontCare,
+            },
         },
         pass: {
             color: [color],
-            depth_stencil: {depth}
-        }
+            depth_stencil: {depth_stencil},
+        },
     )
     .unwrap();
 
-    let vs = shader::vert::load(device.clone()).unwrap();
-    let fs = shader::frag::load(device.clone()).unwrap();
+    let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
 
-    // Before we draw we have to create what is called a pipeline. This is similar to an OpenGL
-    // program, but much more specific.
-    let graphics_pipeline = GraphicsPipeline::start()
-        // We have to indicate which subpass of which render pass this pipeline is going to be used
-        // in. The pipeline will only be usable from this particular subpass.
-        .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-        // We need to indicate the layout of the vertices.
-        .vertex_input_state(mVertex::per_vertex())
-        // The content of the vertex buffer describes a list of triangles.
-        .input_assembly_state(InputAssemblyState::new())
-        // A Vulkan shader can in theory contain multiple entry points, so we have to specify
-        // which one.
-        .vertex_shader(vs.entry_point("main").unwrap(), ())
-        // Use a resizable viewport set to draw over the entire window
-        .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-        // See `vertex_shader`.
-        .fragment_shader(fs.entry_point("main").unwrap(), ())
-        // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
-        .build(device.clone())
-        .unwrap();
-
-    let memory_allocator = StandardMemoryAllocator::new_default(device.clone());
+    let (mut pipeline, mut framebuffers) = window_size_dependent_setup(
+        memory_allocator.clone(),
+        vs.clone(),
+        fs.clone(),
+        &images,
+        render_pass.clone(),
+        &mut camera,
+    );
+    let mut recreate_swapchain = false;
 
     // Before we can start creating and recording command buffers, we need a way of allocating
     // them. Vulkano provides a command buffer allocator, which manages raw Vulkan command pools
     // underneath and provides a safe interface for them.
     let command_buffer_allocator =
         StandardCommandBufferAllocator::new(device.clone(), Default::default());
-
-    // Dynamic viewports allow us to recreate just the viewport when the window is resized
-    // Otherwise we would have to recreate the whole pipeline.
-    let mut viewport = Viewport {
-        origin: [0.0, 0.0],
-        dimensions: [0.0, 0.0],
-        depth_range: 0.0..1.0,
-    };
-
-    let mut camera = Camera::new(Point3::new(0.0, 0.0, -1.0), 50, 50);
-
-    let mut framebuffers = window_size_dependent_setup(
-        &memory_allocator,
-        device.clone(),
-        &images,
-        render_pass.clone(),
-        &mut viewport,
-        &mut camera,
-    );
 
     //Compute stuff
 
@@ -386,6 +368,12 @@ fn main() {
                 }
             }
             Event::RedrawEventsCleared => {
+                let image_extent: [u32; 2] = window.inner_size().into();
+
+                if image_extent.contains(&0) {
+                    return;
+                }
+
                 // Do not draw frame when screen dimensions are zero.
                 // On Windows, this can occur from minimizing the application.
                 let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
@@ -399,13 +387,14 @@ fn main() {
                     let mut vecs = node_buffer.gen_vertex(&plant_buffer);
                     vecs.append(&mut grid_buffer.gen_vertex());
                     Buffer::from_iter(
-                        &memory_allocator,
+                        memory_allocator.clone(),
                         BufferCreateInfo {
                             usage: BufferUsage::VERTEX_BUFFER,
                             ..Default::default()
                         },
                         AllocationCreateInfo {
-                            usage: MemoryUsage::Upload,
+                            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                             ..Default::default()
                         },
                         vecs.iter().cloned(),
@@ -420,30 +409,24 @@ fn main() {
                 // Whenever the window resizes we need to recreate everything dependent on the window size.
                 // In this example that includes the swapchain, the framebuffers and the dynamic state viewport.
                 if recreate_swapchain {
-                    // Get the new dimensions of the window.
-                    let (new_swapchain, new_images) =
-                        match swapchain.recreate(SwapchainCreateInfo {
-                            image_extent: dimensions.into(),
+                    let (new_swapchain, new_images) = swapchain
+                        .recreate(SwapchainCreateInfo {
+                            image_extent,
                             ..swapchain.create_info()
-                        }) {
-                            Ok(r) => r,
-                            // This error tends to happen when the user is manually resizing the window.
-                            // Simply restarting the loop is the easiest way to fix this issue.
-                            Err(SwapchainCreationError::ImageExtentNotSupported { .. }) => return,
-                            Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
-                        };
+                        })
+                        .expect("failed to recreate swapchain");
 
                     swapchain = new_swapchain;
-                    // Because framebuffers contains an Arc on the old swapchain, we need to
-                    // recreate framebuffers as well.
-                    framebuffers = window_size_dependent_setup(
-                        &memory_allocator,
-                        device.clone(),
+                    let (new_pipeline, new_framebuffers) = window_size_dependent_setup(
+                        memory_allocator.clone(),
+                        vs.clone(),
+                        fs.clone(),
                         &new_images,
                         render_pass.clone(),
-                        &mut viewport,
                         &mut camera,
                     );
+                    pipeline = new_pipeline;
+                    framebuffers = new_framebuffers;
                     recreate_swapchain = false;
                 }
 
@@ -455,9 +438,9 @@ fn main() {
                 // This function can block if no image is available. The parameter is an optional timeout
                 // after which the function call will return an error.
                 let (image_index, suboptimal, acquire_future) =
-                    match swapchain::acquire_next_image(swapchain.clone(), None) {
+                    match swapchain::acquire_next_image(swapchain.clone(), None).map_err(Validated::unwrap) {
                         Ok(r) => r,
-                        Err(AcquireError::OutOfDate) => {
+                        Err(VulkanError::OutOfDate) => {
                             recreate_swapchain = true;
                             return;
                         }
@@ -499,29 +482,28 @@ fn main() {
                                 framebuffers[image_index as usize].clone(),
                             )
                         },
-                        // The contents of the first (and only) subpass. This can be either
-                        // `Inline` or `SecondaryCommandBuffers`. The latter is a bit more advanced
-                        // and is not covered here.
-                        SubpassContents::Inline,
+                        Default::default(),
                     )
                     .unwrap()
-                    .set_viewport(0, vec![viewport.clone()])
-                    .bind_pipeline_graphics(graphics_pipeline.clone())
+                    .bind_pipeline_graphics(pipeline.clone())
+                    .unwrap()
                     .bind_vertex_buffers(0, vertex_buffer.clone())
+                    .unwrap()
                     .push_constants(
-                        graphics_pipeline.layout().clone(),
+                        pipeline.layout().clone(),
                         // TODO: location?
                         0,
                         shader::vert::PushConstantData {
                             mvp: camera.mvp().into(),
                         },
                     )
+                    .unwrap()
                     .draw(vertex_buffer.len() as u32, 1, 0, 0)
                     .unwrap()
                     // We leave the render pass by calling `draw_end`. Note that if we had multiple
                     // subpasses we could have called `next_inline` (or `next_secondary`) to jump to the
                     // next subpass.
-                    .end_render_pass()
+                    .end_render_pass(Default::default())
                     .unwrap();
 
                 let command_buffer = builder.build().unwrap();
@@ -544,11 +526,11 @@ fn main() {
                     )
                     .then_signal_fence_and_flush();
 
-                match future {
+                match future.map_err(Validated::unwrap) {
                     Ok(future) => {
                         previous_frame_end = Some(future.boxed());
                     }
-                    Err(FlushError::OutOfDate) => {
+                    Err(VulkanError::OutOfDate) => {
                         recreate_swapchain = true;
                         previous_frame_end = Some(sync::now(device.clone()).boxed());
                     }
@@ -563,30 +545,37 @@ fn main() {
     });
 }
 
-/// This method is called once during initialization, then again whenever the window is resized
+/// This function is called once during initialization, then again whenever the window is resized.
 fn window_size_dependent_setup(
-    memory_allocator: &StandardMemoryAllocator,
-    device: Arc<Device>,
-    images: &[Arc<SwapchainImage>],
+    memory_allocator: Arc<StandardMemoryAllocator>,
+    vs: EntryPoint,
+    fs: EntryPoint,
+    images: &[Arc<Image>],
     render_pass: Arc<RenderPass>,
-    viewport: &mut Viewport,
     camera: &mut Camera,
-) -> Vec<Arc<Framebuffer>> {
-    let dimensions = images[0].dimensions();
-    viewport.dimensions = [dimensions.width() as f32, dimensions.height() as f32];
-    camera.set_screen(dimensions.width(), dimensions.height());
+) -> (Arc<GraphicsPipeline>, Vec<Arc<Framebuffer>>) {
+    let device = memory_allocator.device().clone();
+    let extent = images[0].extent();
+
+    camera.set_screen(extent[0], extent[1]);
 
     let depth_buffer = ImageView::new_default(
-        AttachmentImage::transient(
+        Image::new(
             memory_allocator,
-            dimensions.width_height(),
-            Format::D16_UNORM,
+            ImageCreateInfo {
+                image_type: ImageType::Dim2d,
+                format: Format::D16_UNORM,
+                extent: images[0].extent(),
+                usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                ..Default::default()
+            },
+            AllocationCreateInfo::default(),
         )
         .unwrap(),
     )
     .unwrap();
 
-    images
+    let framebuffers = images
         .iter()
         .map(|image| {
             let view = ImageView::new_default(image.clone()).unwrap();
@@ -599,5 +588,62 @@ fn window_size_dependent_setup(
             )
             .unwrap()
         })
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+
+    // In the triangle example we use a dynamic viewport, as its a simple example. However in the
+    // teapot example, we recreate the pipelines with a hardcoded viewport instead. This allows the
+    // driver to optimize things, at the cost of slower window resizes.
+    // https://computergraphics.stackexchange.com/questions/5742/vulkan-best-way-of-updating-pipeline-viewport
+    let pipeline = {
+        let vertex_input_state = [mVertex::per_vertex()]
+            .definition(&vs.info().input_interface)
+            .unwrap();
+        let stages = [
+            PipelineShaderStageCreateInfo::new(vs),
+            PipelineShaderStageCreateInfo::new(fs),
+        ];
+        let layout = PipelineLayout::new(
+            device.clone(),
+            PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                .into_pipeline_layout_create_info(device.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        let subpass = Subpass::from(render_pass, 0).unwrap();
+
+        GraphicsPipeline::new(
+            device,
+            None,
+            GraphicsPipelineCreateInfo {
+                stages: stages.into_iter().collect(),
+                vertex_input_state: Some(vertex_input_state),
+                input_assembly_state: Some(InputAssemblyState::default()),
+                viewport_state: Some(ViewportState {
+                    viewports: [Viewport {
+                        offset: [0.0, 0.0],
+                        extent: [extent[0] as f32, extent[1] as f32],
+                        depth_range: 0.0..=1.0,
+                    }]
+                    .into_iter()
+                    .collect(),
+                    ..Default::default()
+                }),
+                rasterization_state: Some(RasterizationState::default()),
+                depth_stencil_state: Some(DepthStencilState {
+                    depth: Some(DepthState::simple()),
+                    ..Default::default()
+                }),
+                multisample_state: Some(MultisampleState::default()),
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                    subpass.num_color_attachments(),
+                    ColorBlendAttachmentState::default(),
+                )),
+                subpass: Some(subpass.into()),
+                ..GraphicsPipelineCreateInfo::layout(layout)
+            },
+        )
+        .unwrap()
+    };
+
+    (pipeline, framebuffers)
 }
