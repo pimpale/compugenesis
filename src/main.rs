@@ -4,7 +4,6 @@ use vulkano::pipeline::graphics::color_blend::{ColorBlendState, ColorBlendAttach
 use vulkano::pipeline::graphics::depth_stencil::{DepthStencilState, DepthState};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::RasterizationState;
-use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::shader::EntryPoint;
 use winit::event_loop::{EventLoop, ControlFlow};
@@ -13,7 +12,7 @@ use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, 
 };
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, QueueCreateInfo, QueueFlags, DeviceOwned};
@@ -24,7 +23,7 @@ use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, Standar
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineShaderStageCreateInfo, PipelineLayout, DynamicState};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineShaderStageCreateInfo, PipelineLayout};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::swapchain::{self, Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo};
 use vulkano::sync::GpuFuture;
@@ -179,7 +178,7 @@ fn main() {
             device.clone(),
             surface.clone(),
             SwapchainCreateInfo {
-                min_image_count: surface_capabilities.min_image_count.max(2),
+                min_image_count: surface_capabilities.min_image_count,
 
                 image_format,
                 // The dimensions of the window, only used to initially setup the swapchain.
@@ -259,7 +258,6 @@ fn main() {
         render_pass.clone(),
         &mut camera,
     );
-    let mut recreate_swapchain = false;
 
     // Before we can start creating and recording command buffers, we need a way of allocating
     // them. Vulkano provides a command buffer allocator, which manages raw Vulkan command pools
@@ -332,6 +330,9 @@ fn main() {
 
     let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
+    let mut startTime = std::time::Instant::now();
+    let mut frameCount = 0;
+
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
@@ -368,6 +369,16 @@ fn main() {
                 }
             }
             Event::RedrawEventsCleared => {
+                frameCount += 1;
+                if frameCount > 100 {
+                    let elapsed = startTime.elapsed();
+                    println!(
+                        "FPS: {}",
+                        (frameCount as f32) / (elapsed.as_secs_f32())
+                    );
+                    frameCount = 0;
+                    startTime = std::time::Instant::now();
+                }
                 let image_extent: [u32; 2] = window.inner_size().into();
 
                 if image_extent.contains(&0) {
